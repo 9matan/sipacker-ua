@@ -1,0 +1,28 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "cargo",
+			"command": "build",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"label": "rust: cargo build",
+			//"dependsOn": [
+			//	"rust: cargo fmt"
+			//]
+		},
+		{
+			"type": "cargo",
+			"command": "fmt",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"label": "rust: cargo fmt",
+		}
+	]
+}

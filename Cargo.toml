@@ -1,0 +1,12 @@
+[package]
+name = "sipacker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ezk-internal = "0.2.0"
+ezk-sip-types = "0.4.0"
+ezk-sip-core = "0.6.0"
+ezk-sip-ua = "0.6.0"
+tokio = "1.43.0"
+env_logger = "0.11.6"

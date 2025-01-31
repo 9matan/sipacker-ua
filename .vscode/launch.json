@@ -1,0 +1,31 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "(Win) Launch",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceRoot}/target/debug/sipacker.exe",
+            "preLaunchTask": "rust: cargo build",
+            "stopAtEntry": false,
+            "cwd": "${workspaceRoot}",
+            "console": "integratedTerminal",
+            "environment": [ {"name": "RUST_LOG", "value": "info" }]
+        },
+        {
+            "name": "(Win) Tests (All)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "cargo",
+            "preLaunchTask": "rust: cargo build",
+            "args": ["test"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceRoot}",
+            "console": "integratedTerminal",
+        },
+     ]
+
+}
