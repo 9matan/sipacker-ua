@@ -8,12 +8,15 @@
             "name": "(Win) Launch",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceRoot}/target/debug/sipacker.exe",
+            "program": "${workspaceRoot}/target/debug/sipacker_ua.exe",
             "preLaunchTask": "rust: cargo build",
             "stopAtEntry": false,
             "cwd": "${workspaceRoot}",
             "console": "integratedTerminal",
-            "environment": [ {"name": "RUST_LOG", "value": "info" }]
+            "environment": [
+                {"name": "RUST_LOG", "value": "debug" }
+                , { "name": "RUST_BACKTRACE", "value": "full"}
+            ]
         },
         {
             "name": "(Win) Tests (All)",

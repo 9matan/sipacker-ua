@@ -1,5 +1,5 @@
 [package]
-name = "sipacker"
+name = "sipacker_ua"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,5 +8,8 @@ ezk-internal = "0.2.0"
 ezk-sip-types = "0.4.0"
 ezk-sip-core = "0.6.0"
 ezk-sip-ua = "0.6.0"
+
+env_logger = { version="0.11.6", features = ["unstable-kv"] }
+log = { version="0.4.26", features = ["kv"] }
+
 tokio = "1.43.0"
-env_logger = "0.11.6"
