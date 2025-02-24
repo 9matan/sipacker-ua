@@ -1,3 +1,1 @@
-pub struct Settings {
-    
-}
+pub struct Settings {}

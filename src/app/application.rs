@@ -1,3 +1,5 @@
+use crate::sipacker;
+
 use super::args::Args;
 
 use std::error::Error;
@@ -19,17 +21,19 @@ pub fn run_app(_args: Args) -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 async fn run_app_inner() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let settings = crate::sipacker::registration::Settings {
-        sip_port: 5160,
-        sip_registrar_ip: Ipv4Addr::new(192,168,3, 71).into(),
-        contact_ip: Ipv4Addr::new(192,168,3, 92).into(),
-        extension_number: 3333,
-        expiry: Duration::from_secs(600),
-    };
+    let mut user_agent = sipacker::user_agent::UserAgent::build(
+        ("192.168.68.124".parse::<Ipv4Addr>().unwrap(), 5060).into(),
+    )
+    .await?;
 
-    let registrator = crate::sipacker::registration::Registrator::build(settings).await?;
+    let reg_settings = sipacker::user_agent::registration::Settings::builder()
+        .sip_server_port(5160)
+        .sip_registrar_ip("192.168.68.119".parse().unwrap())
+        .extension_number(3333)
+        .expiry(Duration::from_secs(600))
+        .build();
 
-    Arc::clone(&registrator).run_registration().await;
+    user_agent.register(reg_settings).await?;
 
     loop {
         tokio::time::sleep(Duration::from_secs(20)).await;

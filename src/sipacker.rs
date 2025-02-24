@@ -1,1 +1,2 @@
-pub mod registration;
+pub mod registrator;
+pub mod user_agent;
