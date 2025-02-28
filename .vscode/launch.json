@@ -5,29 +5,17 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "(Win) Launch",
-            "type": "cppvsdbg",
+            "name": "(Linux) Launch",
+            "type": "lldb",
             "request": "launch",
-            "program": "${workspaceRoot}/target/debug/sipacker_ua.exe",
+            "program": "${workspaceRoot}/target/debug/sipacker_ua",
             "preLaunchTask": "rust: cargo build",
-            "stopAtEntry": false,
             "cwd": "${workspaceRoot}",
             "console": "integratedTerminal",
-            "environment": [
-                {"name": "RUST_LOG", "value": "debug" }
-                , { "name": "RUST_BACKTRACE", "value": "full"}
-            ]
-        },
-        {
-            "name": "(Win) Tests (All)",
-            "type": "cppvsdbg",
-            "request": "launch",
-            "program": "cargo",
-            "preLaunchTask": "rust: cargo build",
-            "args": ["test"],
-            "stopAtEntry": false,
-            "cwd": "${workspaceRoot}",
-            "console": "integratedTerminal",
+            "env": {
+                "RUST_LOG": "debug",
+                "RUST_BACKTRACE": "full",
+            },
         },
      ]
 

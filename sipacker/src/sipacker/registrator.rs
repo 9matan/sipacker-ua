@@ -1,7 +1,7 @@
 use ezk_sip_core::Endpoint;
 use ezk_sip_core::{transaction::TsxResponse, transport::TargetTransportInfo};
 use ezk_sip_types::msg::StatusLine;
-use ezk_sip_types::{Code, CodeKind};
+use ezk_sip_types::{CodeKind, StatusCode};
 use ezk_sip_ua::register::Registration;
 use std::error::Error;
 use std::sync::Arc;
@@ -120,8 +120,8 @@ pub enum RegistrationStatusKind {
     Successful,
 }
 
-impl From<Code> for RegistrationStatusKind {
-    fn from(value: Code) -> Self {
+impl From<StatusCode> for RegistrationStatusKind {
+    fn from(value: StatusCode) -> Self {
         match value.kind() {
             CodeKind::Success => RegistrationStatusKind::Successful,
             CodeKind::GlobalFailure => RegistrationStatusKind::Failed,

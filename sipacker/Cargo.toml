@@ -1,0 +1,17 @@
+[package]
+name = "sipacker_ua"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bytesstr = "1.0.2"
+tokio = "1.43.0"
+typed-builder = "0.20.0"
+
+ezk-internal.workspace = true
+ezk-sip-types.workspace = true
+ezk-sip-core.workspace = true
+ezk-sip-ua.workspace = true
+
+env_logger = { version="0.11.6", features = ["unstable-kv"] }
+log = { version="0.4.26", features = ["kv"] }

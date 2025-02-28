@@ -12,9 +12,9 @@
 				"isDefault": true
 			},
 			"label": "rust: cargo build",
-			//"dependsOn": [
-			//	"rust: cargo fmt"
-			//]
+			"dependsOn": [
+				"rust: cargo fmt"
+			]
 		},
 		{
 			"type": "cargo",

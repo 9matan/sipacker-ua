@@ -67,7 +67,10 @@ impl UserAgent {
 
 pub mod registration {
     use super::*;
-    use ezk_sip_types::uri::{sip::SipUri, NameAddr};
+    use ezk_sip_types::{
+        header::typed::Contact,
+        uri::{sip::SipUri, NameAddr},
+    };
     use ezk_sip_ua::register::Registration;
     use std::net::IpAddr;
     use typed_builder::TypedBuilder;
@@ -105,7 +108,7 @@ pub mod registration {
 
         let registration = Registration::new(
             NameAddr::uri(id),
-            NameAddr::uri(contact),
+            Contact::new(NameAddr::uri(contact)),
             registrar.into(),
             settings.expiry,
         );

@@ -21,14 +21,13 @@ pub fn run_app(_args: Args) -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 async fn run_app_inner() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let mut user_agent = sipacker::user_agent::UserAgent::build(
-        ("192.168.68.124".parse::<Ipv4Addr>().unwrap(), 5060).into(),
-    )
-    .await?;
+    let ua_ip: Ipv4Addr = "192.168.3.112".parse().unwrap();
+    let sip_ip: Ipv4Addr = "192.168.3.51".parse().unwrap();
+    let mut user_agent = sipacker::user_agent::UserAgent::build((ua_ip, 5060).into()).await?;
 
     let reg_settings = sipacker::user_agent::registration::Settings::builder()
         .sip_server_port(5160)
-        .sip_registrar_ip("192.168.68.119".parse().unwrap())
+        .sip_registrar_ip(sip_ip.into())
         .extension_number(3333)
         .expiry(Duration::from_secs(600))
         .build();
