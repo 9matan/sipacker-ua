@@ -1,9 +1,12 @@
+use crate::sipacker::invite_acceptor_layer::InviteAcceptLayer;
 use crate::sipacker::registrator::{RegistrationStatusKind, Registrator};
+use ezk_session::{AsyncSdpSession, Codec, Codecs};
 use ezk_sip_core::{
     transport::{tcp::TcpConnector, udp::Udp},
     Endpoint,
 };
 use ezk_sip_ua::{dialog::DialogLayer, invite::InviteLayer};
+use simple_error::SimpleError;
 use std::{
     error::Error,
     net::{IpAddr, SocketAddr},
@@ -11,26 +14,41 @@ use std::{
     time::Duration,
 };
 use tokio::net::ToSocketAddrs;
+use tokio::sync::Mutex;
 
 type UAResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 pub struct UserAgent {
     sip_endpoint: Endpoint,
     registrator: Option<Arc<Registrator>>,
+    session: Arc<Mutex<AsyncSdpSession>>,
     socketaddr: SocketAddr,
 }
 
 impl UserAgent {
     pub async fn build(socketaddr: SocketAddr) -> UAResult<UserAgent> {
+        let options = ezk_session::Options {
+            offer_transport: ezk_session::TransportType::Rtp,
+            ..Default::default()
+        };
+        let mut session = AsyncSdpSession::new(socketaddr.ip(), options);
+        let codecs = Codecs::new(ezk_session::MediaType::Audio).with_codec(Codec::G722);
+        session
+            .add_local_media(codecs, 1, ezk_session::Direction::SendRecv)
+            .ok_or(SimpleError::new("Could not create a local media"))?;
+        let session = Arc::new(Mutex::new(session));
+
         let mut builder = Endpoint::builder();
-        // builder.add_layer(DialogLayer::default());
-        // builder.add_layer(InviteLayer::default());
+        builder.add_layer(DialogLayer::default());
+        builder.add_layer(InviteLayer::default());
+        builder.add_layer(InviteAcceptLayer::new(Arc::clone(&session)));
         Udp::spawn(&mut builder, (socketaddr.ip(), socketaddr.port())).await?;
         // builder.add_transport_factory(Arc::new(TcpConnector::default()));
         let sip_endpoint = builder.build();
 
         Ok(UserAgent {
             sip_endpoint,
+            session,
             registrator: None,
             socketaddr,
         })

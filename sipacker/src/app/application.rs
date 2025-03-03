@@ -21,8 +21,8 @@ pub fn run_app(_args: Args) -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 async fn run_app_inner() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let ua_ip: Ipv4Addr = "192.168.3.112".parse().unwrap();
-    let sip_ip: Ipv4Addr = "192.168.3.51".parse().unwrap();
+    let ua_ip: Ipv4Addr = "192.168.3.28".parse().unwrap();
+    let sip_ip: Ipv4Addr = "192.168.3.30".parse().unwrap();
     let mut user_agent = sipacker::user_agent::UserAgent::build((ua_ip, 5060).into()).await?;
 
     let reg_settings = sipacker::user_agent::registration::Settings::builder()
