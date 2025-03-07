@@ -1,22 +1,16 @@
 use crate::sipacker::invite_acceptor_layer::{InviteAcceptLayer, InviteAction};
 use crate::sipacker::registrator::{RegistrationStatusKind, Registrator};
+use crate::sipacker::user_agent_event::UserAgentEvent;
+
 use ezk_session::{AsyncSdpSession, Codec, Codecs};
-use ezk_sip_core::{
-    transport::{tcp::TcpConnector, udp::Udp},
-    Endpoint,
-};
-use ezk_sip_types::header::typed::{Contact, FromTo};
+use ezk_sip_core::{transport::udp::Udp, Endpoint};
+use ezk_sip_types::header::typed::Contact;
 use ezk_sip_types::uri::sip::SipUri;
 use ezk_sip_types::uri::NameAddr;
 use ezk_sip_ua::{dialog::DialogLayer, invite::InviteLayer};
 use simple_error::SimpleError;
-use std::{
-    error::Error,
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
-    time::Duration,
-};
-use tokio::net::ToSocketAddrs;
+use std::{error::Error, net::SocketAddr, sync::Arc, time::Duration};
+use tokio::select;
 use tokio::sync::Mutex;
 
 type UAResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
@@ -26,6 +20,7 @@ pub struct UserAgent {
     registrator: Option<Arc<Registrator>>,
     session: Arc<Mutex<AsyncSdpSession>>,
     socketaddr: SocketAddr,
+    event_receiver: tokio::sync::mpsc::Receiver<UserAgentEvent>,
 }
 
 impl UserAgent {
@@ -41,10 +36,11 @@ impl UserAgent {
             .ok_or(SimpleError::new("Could not create a local media"))?;
         let session = Arc::new(Mutex::new(session));
 
+        let (sender, receiver) = tokio::sync::mpsc::channel(20);
         let mut builder = Endpoint::builder();
         builder.add_layer(DialogLayer::default());
         builder.add_layer(InviteLayer::default());
-        builder.add_layer(InviteAcceptLayer::new(Arc::clone(&session)));
+        builder.add_layer(InviteAcceptLayer::new(Arc::clone(&session), sender));
         Udp::spawn(&mut builder, (socketaddr.ip(), socketaddr.port())).await?;
         // builder.add_transport_factory(Arc::new(TcpConnector::default()));
         let sip_endpoint = builder.build();
@@ -54,6 +50,7 @@ impl UserAgent {
             session,
             registrator: None,
             socketaddr,
+            event_receiver: receiver,
         })
     }
 
@@ -102,15 +99,19 @@ impl UserAgent {
         }
     }
 
-    pub async fn run(&mut self) {
-        let _e = self.session.lock().await.run().await;
-    }
-
-    pub async fn get_incoming_call(&self) -> Option<FromTo> {
-        self.sip_endpoint
-            .layer::<InviteAcceptLayer>()
-            .incoming_from()
-            .await
+    pub async fn run(&mut self, timeout: Duration) -> Option<UserAgentEvent> {
+        let mut session = self.session.lock().await;
+        select! {
+            event = self.event_receiver.recv() => {
+                event
+            }
+            _ = session.run() => {
+                None
+            }
+            _ = tokio::time::sleep(timeout) => {
+                None
+            }
+        }
     }
 
     pub async fn accept_incoming_call(&self) {

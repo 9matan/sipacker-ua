@@ -1,5 +1,5 @@
+use ezk_sip_core::transport::TargetTransportInfo;
 use ezk_sip_core::Endpoint;
-use ezk_sip_core::{transaction::TsxResponse, transport::TargetTransportInfo};
 use ezk_sip_types::msg::StatusLine;
 use ezk_sip_types::{CodeKind, StatusCode};
 use ezk_sip_ua::register::Registration;
@@ -93,11 +93,6 @@ impl Registrator {
     async fn set_last_response_status(&self, status: Option<StatusLine>) {
         *(self.last_response_status.lock().await) = status;
     }
-
-    // async fn registration_status(&self) -> RegistrationStatus {
-    //     let last_response_status = self.last_response_status.lock().await;
-    //     (*last_response_status).as_ref().map(|sl| sl.code).into()
-    // }
 }
 
 pub struct RegistrationStatus {

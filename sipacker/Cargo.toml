@@ -4,12 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+async-channel = "2.3.1"
 async-trait = "0.1.86"
 bytes = "1.10.0"
 bytesstr = "1.0.2"
 tokio = "1.43.0"
-simple-error = "0.3.1"
 typed-builder = "0.20.0"
+simple-error = "0.3.1"
 
 ezk-internal.workspace = true
 ezk-sip-types.workspace = true

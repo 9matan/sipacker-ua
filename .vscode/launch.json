@@ -13,7 +13,7 @@
             "cwd": "${workspaceRoot}",
             "console": "integratedTerminal",
             "env": {
-                "RUST_LOG": "debug",
+                "RUST_LOG": "debug,neli=error",
                 "RUST_BACKTRACE": "full",
             },
         },

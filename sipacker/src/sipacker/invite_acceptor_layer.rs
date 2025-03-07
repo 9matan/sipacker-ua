@@ -1,22 +1,17 @@
-use std::default;
-use std::net::Ipv4Addr;
-use std::sync::Arc;
-use std::time::Duration;
+use crate::sipacker::user_agent_event::*;
 
 use bytes::Bytes;
 use bytesstr::BytesStr;
-use ezk_session::{AsyncSdpSession, Codec, Codecs};
-use ezk_sip_core::transport::udp::Udp;
-use ezk_sip_core::{Endpoint, IncomingRequest, Layer, MayTake, Request, Result};
-use ezk_sip_types::header::typed::{Contact, FromTo};
-use ezk_sip_types::uri::sip::SipUri;
-use ezk_sip_types::uri::NameAddr;
-use ezk_sip_types::{Method, Name, StatusCode};
-use ezk_sip_ua::dialog::{Dialog, DialogLayer};
+use ezk_session::AsyncSdpSession;
+use ezk_sip_core::{Endpoint, IncomingRequest, Layer, MayTake, Result};
+use ezk_sip_types::header::typed::Contact;
+use ezk_sip_types::{Name, StatusCode};
+use ezk_sip_ua::dialog::Dialog;
 use ezk_sip_ua::invite::acceptor::InviteAcceptor;
 use ezk_sip_ua::invite::session::{InviteSession, InviteSessionEvent};
-use ezk_sip_ua::invite::InviteLayer;
 use simple_error::SimpleError;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 const WAIT_FOR_ACTION_TIMEOUT_S: usize = 10;
@@ -26,11 +21,11 @@ pub struct InviteAcceptLayer {
     sdp_session: Arc<Mutex<AsyncSdpSession>>,
 }
 
-#[derive(Default)]
 struct InviteAcceptLayerInner {
     invite_action: Option<InviteAction>,
-    incoming_from: Option<FromTo>,
+    have_active_incoming: bool,
     outgoing_contact: Option<Contact>,
+    event_sender: tokio::sync::mpsc::Sender<UserAgentEvent>,
 }
 
 #[derive(Clone)]
@@ -43,8 +38,16 @@ pub enum InviteAction {
 type DynResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 impl InviteAcceptLayer {
-    pub fn new(sdp_session: Arc<Mutex<AsyncSdpSession>>) -> Self {
-        let inner = Mutex::default();
+    pub fn new(
+        sdp_session: Arc<Mutex<AsyncSdpSession>>,
+        event_sender: tokio::sync::mpsc::Sender<UserAgentEvent>,
+    ) -> Self {
+        let inner = Mutex::new(InviteAcceptLayerInner {
+            invite_action: None,
+            have_active_incoming: false,
+            outgoing_contact: None,
+            event_sender,
+        });
         Self { sdp_session, inner }
     }
 
@@ -56,45 +59,37 @@ impl InviteAcceptLayer {
         self.inner.lock().await.outgoing_contact = Some(outgoing_contact);
     }
 
-    pub async fn incoming_from(&self) -> Option<FromTo> {
-        self.inner.lock().await.incoming_from.clone()
-    }
-
-    async fn outgoing_contact(&self) -> Option<Contact> {
-        self.inner.lock().await.outgoing_contact.clone()
-    }
-
-    async fn has_active_incoming(&self) -> bool {
-        self.inner.lock().await.incoming_from.is_some()
-    }
-
     async fn handle_invite_req(
         &self,
         endpoint: &Endpoint,
         invite_req: IncomingRequest,
     ) -> DynResult<()> {
-        let outgoing_contact = match self.outgoing_contact().await {
-            Some(contact) => contact,
+        let mut inner = self.inner.lock().await;
+        let outgoing_contact = match &inner.outgoing_contact {
+            Some(contact) => contact.clone(),
             None => {
                 log::info!("The outgoing contact is not set. Skip the invite message");
                 return Ok(());
             }
         };
 
-        if self.has_active_incoming().await {
+        if inner.have_active_incoming {
             log::info!("There is an active incoming already. Skip the invite message");
             return Ok(());
         }
 
-        async {
-            let mut inner = self.inner.lock().await;
-            inner.incoming_from = Some(invite_req.base_headers.from.clone());
-            inner.invite_action = None;
+        inner.have_active_incoming = true;
+        inner.invite_action = None;
+
+        let incoming_event = data::IncomingCall {
+            incoming_client: invite_req.base_headers.from.clone(),
         }
-        .await;
+        .into();
+        inner.event_sender.send(incoming_event).await?;
+        std::mem::drop(inner);
 
         let invite_body = invite_req.body.clone();
-        let dialog = Dialog::new_server(endpoint.clone(), &invite_req, outgoing_contact)?;
+        let dialog = Dialog::new_server(endpoint.clone(), &invite_req, outgoing_contact.clone())?;
         let mut acceptor = InviteAcceptor::new(dialog, invite_req);
 
         let action = self.wait_for_invite_action(&mut acceptor).await?;
@@ -146,6 +141,7 @@ impl InviteAcceptLayer {
                     event.respond_success(response).await.unwrap();
                 }
                 InviteSessionEvent::Bye(event) => {
+                    println!("InviteSessionEvent::Bye");
                     event.process_default().await.unwrap();
                 }
                 InviteSessionEvent::Terminated => {
