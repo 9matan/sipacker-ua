@@ -1,10 +1,13 @@
-use crate::sipacker::invite_acceptor_layer::InviteAcceptLayer;
+use crate::sipacker::invite_acceptor_layer::{InviteAcceptLayer, InviteAction};
 use crate::sipacker::registrator::{RegistrationStatusKind, Registrator};
 use ezk_session::{AsyncSdpSession, Codec, Codecs};
 use ezk_sip_core::{
     transport::{tcp::TcpConnector, udp::Udp},
     Endpoint,
 };
+use ezk_sip_types::header::typed::{Contact, FromTo};
+use ezk_sip_types::uri::sip::SipUri;
+use ezk_sip_types::uri::NameAddr;
 use ezk_sip_ua::{dialog::DialogLayer, invite::InviteLayer};
 use simple_error::SimpleError;
 use std::{
@@ -57,6 +60,16 @@ impl UserAgent {
     pub async fn register(&mut self, settings: registration::Settings) -> UAResult<()> {
         log::info!("Registering the UA ...");
 
+        let contact = {
+            let contact_ip = self.socketaddr.ip();
+            let contact_port = self.socketaddr.port();
+            let number = settings.extension_number.to_string();
+
+            let contact = format!("sip:{number}@{contact_ip}:{contact_port}");
+            let contact: SipUri = contact.parse()?;
+            Contact::new(NameAddr::uri(contact))
+        };
+
         let registrator =
             registration::build(self.sip_endpoint.clone(), settings, self.socketaddr).await?;
         Arc::clone(&registrator).run_registration().await;
@@ -65,9 +78,16 @@ impl UserAgent {
 
         let reason = reg_status.reason.as_str();
         match reg_status.kind {
-            RegistrationStatusKind::Successful => log::info!("The agent is successfuly registered"),
+            RegistrationStatusKind::Successful => {
+                log::info!("The agent is successfuly registered");
+
+                self.sip_endpoint
+                    .layer::<InviteAcceptLayer>()
+                    .set_outgoing_contact(contact)
+                    .await;
+            }
             RegistrationStatusKind::Unregistered => {
-                log::warn!(reason:%; "The agent is unregistered")
+                log::warn!(reason:%; "The agent is unregistered");
             }
             RegistrationStatusKind::Failed => log::error!(reason:%; "The agent failed to register"),
         };
@@ -80,6 +100,24 @@ impl UserAgent {
             Arc::clone(&registrator).stop_registration().await;
             self.registrator = None;
         }
+    }
+
+    pub async fn run(&mut self) {
+        let _e = self.session.lock().await.run().await;
+    }
+
+    pub async fn get_incoming_call(&self) -> Option<FromTo> {
+        self.sip_endpoint
+            .layer::<InviteAcceptLayer>()
+            .incoming_from()
+            .await
+    }
+
+    pub async fn accept_incoming_call(&self) {
+        self.sip_endpoint
+            .layer::<InviteAcceptLayer>()
+            .set_invite_action(InviteAction::Accept)
+            .await;
     }
 }
 
