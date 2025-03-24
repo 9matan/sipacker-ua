@@ -2,6 +2,7 @@ use crate::sipacker::invite_acceptor_layer::{InviteAcceptLayer, InviteAction};
 use crate::sipacker::registrator::{RegistrationStatusKind, Registrator};
 use crate::sipacker::user_agent_event::UserAgentEvent;
 
+use ezk_rtp::RtpSession;
 use ezk_session::{AsyncSdpSession, Codec, Codecs};
 use ezk_sip_core::{transport::udp::Udp, Endpoint};
 use ezk_sip_types::header::typed::Contact;
@@ -18,7 +19,8 @@ type UAResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 pub struct UserAgent {
     sip_endpoint: Endpoint,
     registrator: Option<Arc<Registrator>>,
-    session: Arc<Mutex<AsyncSdpSession>>,
+    sdp_session: Arc<Mutex<AsyncSdpSession>>,
+    rtp_session: Arc<Mutex<Option<RtpSession>>>,
     socketaddr: SocketAddr,
     event_receiver: tokio::sync::mpsc::Receiver<UserAgentEvent>,
 }
@@ -29,25 +31,30 @@ impl UserAgent {
             offer_transport: ezk_session::TransportType::Rtp,
             ..Default::default()
         };
-        let mut session = AsyncSdpSession::new(socketaddr.ip(), options);
+        let mut sdp_session = AsyncSdpSession::new(socketaddr.ip(), options);
         let codecs = Codecs::new(ezk_session::MediaType::Audio).with_codec(Codec::G722);
-        session
+        sdp_session
             .add_local_media(codecs, 1, ezk_session::Direction::SendRecv)
             .ok_or(SimpleError::new("Could not create a local media"))?;
-        let session = Arc::new(Mutex::new(session));
+        let sdp_session = Arc::new(Mutex::new(sdp_session));
 
         let (sender, receiver) = tokio::sync::mpsc::channel(20);
         let mut builder = Endpoint::builder();
         builder.add_layer(DialogLayer::default());
         builder.add_layer(InviteLayer::default());
-        builder.add_layer(InviteAcceptLayer::new(Arc::clone(&session), sender));
+        builder.add_layer(InviteAcceptLayer::new(Arc::clone(&sdp_session), sender));
         Udp::spawn(&mut builder, (socketaddr.ip(), socketaddr.port())).await?;
         // builder.add_transport_factory(Arc::new(TcpConnector::default()));
         let sip_endpoint = builder.build();
 
+        let rtp_session = Arc::default();
+
+        sdp::run_sdp_event_handler(Arc::clone(&sdp_session), Arc::clone(&rtp_session));
+
         Ok(UserAgent {
             sip_endpoint,
-            session,
+            sdp_session,
+            rtp_session,
             registrator: None,
             socketaddr,
             event_receiver: receiver,
@@ -100,13 +107,9 @@ impl UserAgent {
     }
 
     pub async fn run(&mut self, timeout: Duration) -> Option<UserAgentEvent> {
-        let mut session = self.session.lock().await;
         select! {
             event = self.event_receiver.recv() => {
                 event
-            }
-            _ = session.run() => {
-                None
             }
             _ = tokio::time::sleep(timeout) => {
                 None
@@ -119,6 +122,67 @@ impl UserAgent {
             .layer::<InviteAcceptLayer>()
             .set_invite_action(InviteAction::Accept)
             .await;
+    }
+}
+
+mod sdp {
+    use super::*;
+    use ezk_rtp::Ssrc;
+    use ezk_session::AsyncEvent;
+    use rand::RngCore;
+    use tokio::sync::MutexGuard;
+
+    pub fn run_sdp_event_handler(
+        sdp_session: Arc<Mutex<AsyncSdpSession>>,
+        rtp_session: Arc<Mutex<Option<RtpSession>>>,
+    ) {
+        tokio::spawn(sdp_event_handler_task(sdp_session, rtp_session));
+    }
+
+    async fn sdp_event_handler_task(
+        sdp_session: Arc<Mutex<AsyncSdpSession>>,
+        rtp_session: Arc<Mutex<Option<RtpSession>>>,
+    ) {
+        loop {
+            tokio::time::sleep(Duration::from_micros(100)).await;
+
+            let mut sdp_session = sdp_session.lock().await;
+            let mut rtp_session = rtp_session.lock().await;
+            loop {
+                match sdp_session.run_once().await {
+                    Ok(event) => {
+                        if let Some(event) = event {
+                            handle_sdp_event(event, &mut rtp_session);
+                        } else {
+                            break;
+                        }
+                    }
+                    Err(_err) => {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_sdp_event<'a>(
+        event: ezk_session::AsyncEvent,
+        rtp_session: &mut MutexGuard<'a, Option<RtpSession>>,
+    ) {
+        match event {
+            AsyncEvent::MediaAdded(event) => {
+                let ssrc = Ssrc(rand::rng().next_u32());
+                let clock_rate = event.codec.clock_rate;
+                **rtp_session = Some(RtpSession::new(ssrc, clock_rate));
+            }
+            AsyncEvent::MediaRemoved(_) => {
+                **rtp_session = None;
+            }
+            AsyncEvent::ReceiveRTP { media_id, packet } => {
+                rtp_session.as_mut().unwrap().recv_rtp(packet);
+            }
+            _ => {}
+        }
     }
 }
 

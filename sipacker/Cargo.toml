@@ -8,6 +8,7 @@ async-channel = "2.3.1"
 async-trait = "0.1.86"
 bytes = "1.10.0"
 bytesstr = "1.0.2"
+rand = "0.9.0"
 tokio = "1.43.0"
 typed-builder = "0.20.0"
 simple-error = "0.3.1"
@@ -17,6 +18,7 @@ ezk-sip-types.workspace = true
 ezk-sip-core.workspace = true
 ezk-sip-ua.workspace = true
 
+ezk-rtp.workspace = true
 ezk-sdp-types.workspace = true
 ezk-session.workspace = true
 
