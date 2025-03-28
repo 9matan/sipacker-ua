@@ -8,10 +8,16 @@ async-channel = "2.3.1"
 async-trait = "0.1.86"
 bytes = "1.10.0"
 bytesstr = "1.0.2"
+rodio = "0.20.1"
 rand = "0.9.0"
 tokio = "1.43.0"
 typed-builder = "0.20.0"
 simple-error = "0.3.1"
+
+env_logger = { version="0.11.6", features = ["unstable-kv"] }
+log = { version="0.4.26", features = ["kv"] }
+
+# ffmpeg-next = "7.1.0"
 
 ezk-internal.workspace = true
 ezk-sip-types.workspace = true
@@ -22,5 +28,4 @@ ezk-rtp.workspace = true
 ezk-sdp-types.workspace = true
 ezk-session.workspace = true
 
-env_logger = { version="0.11.6", features = ["unstable-kv"] }
-log = { version="0.4.26", features = ["kv"] }
+ezk-g711.workspace = true

@@ -18,6 +18,8 @@ ezk-sdp-types = { package = "ezk-sdp-types", version = "0.5.0", path = "../ezk/m
 ezk-session = { package = "ezk-session", version = "0.1.0", path = "../ezk/media/session" }
 ezk-rtp = { package = "ezk-rtp", version = "0.3.0", path = "../ezk/media/rtp" }
 
+ezk-g711 = { package = "ezk-g711", version = "0.2.0", path = "../ezk-media/crates/ezk-g711" }
+
 
 rustls-pki-types = { version = "1", features = ["std"] }
 tokio-native-tls = { version = "0.3" }

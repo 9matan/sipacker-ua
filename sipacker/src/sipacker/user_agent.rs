@@ -20,9 +20,9 @@ pub struct UserAgent {
     sip_endpoint: Endpoint,
     registrator: Option<Arc<Registrator>>,
     sdp_session: Arc<Mutex<AsyncSdpSession>>,
-    rtp_session: Arc<Mutex<Option<RtpSession>>>,
     socketaddr: SocketAddr,
     event_receiver: tokio::sync::mpsc::Receiver<UserAgentEvent>,
+    audio_player: AudioPlayer,
 }
 
 impl UserAgent {
@@ -32,7 +32,7 @@ impl UserAgent {
             ..Default::default()
         };
         let mut sdp_session = AsyncSdpSession::new(socketaddr.ip(), options);
-        let codecs = Codecs::new(ezk_session::MediaType::Audio).with_codec(Codec::G722);
+        let codecs = Codecs::new(ezk_session::MediaType::Audio).with_codec(Codec::PCMA);
         sdp_session
             .add_local_media(codecs, 1, ezk_session::Direction::SendRecv)
             .ok_or(SimpleError::new("Could not create a local media"))?;
@@ -44,20 +44,18 @@ impl UserAgent {
         builder.add_layer(InviteLayer::default());
         builder.add_layer(InviteAcceptLayer::new(Arc::clone(&sdp_session), sender));
         Udp::spawn(&mut builder, (socketaddr.ip(), socketaddr.port())).await?;
-        // builder.add_transport_factory(Arc::new(TcpConnector::default()));
         let sip_endpoint = builder.build();
 
-        let rtp_session = Arc::default();
-
-        sdp::run_sdp_event_handler(Arc::clone(&sdp_session), Arc::clone(&rtp_session));
+        let audio_player = AudioPlayer::build()?;
+        sdp::run_sdp_event_handler(Arc::clone(&sdp_session), audio_player.clone_sink());
 
         Ok(UserAgent {
             sip_endpoint,
             sdp_session,
-            rtp_session,
             registrator: None,
             socketaddr,
             event_receiver: receiver,
+            audio_player,
         })
     }
 
@@ -127,59 +125,58 @@ impl UserAgent {
 
 mod sdp {
     use super::*;
-    use ezk_rtp::Ssrc;
     use ezk_session::AsyncEvent;
-    use rand::RngCore;
-    use tokio::sync::MutexGuard;
 
     pub fn run_sdp_event_handler(
         sdp_session: Arc<Mutex<AsyncSdpSession>>,
-        rtp_session: Arc<Mutex<Option<RtpSession>>>,
+        audio_sink: Arc<rodio::Sink>,
     ) {
-        tokio::spawn(sdp_event_handler_task(sdp_session, rtp_session));
+        tokio::spawn(sdp_event_handler_task(sdp_session, audio_sink));
     }
 
     async fn sdp_event_handler_task(
         sdp_session: Arc<Mutex<AsyncSdpSession>>,
-        rtp_session: Arc<Mutex<Option<RtpSession>>>,
+        audio_sink: Arc<rodio::Sink>,
     ) {
         loop {
-            tokio::time::sleep(Duration::from_micros(100)).await;
-
+            tokio::time::sleep(Duration::from_micros(10)).await;
             let mut sdp_session = sdp_session.lock().await;
-            let mut rtp_session = rtp_session.lock().await;
             loop {
-                match sdp_session.run_once().await {
-                    Ok(event) => {
-                        if let Some(event) = event {
-                            handle_sdp_event(event, &mut rtp_session);
-                        } else {
-                            break;
+                let timeout = Duration::from_millis(10);
+                select! {
+                    event = sdp_session.run() => {
+                        if let Ok(event) = event {
+                            handle_sdp_event(event, &audio_sink);
                         }
                     }
-                    Err(_err) => {
-                        break;
+                    _ = tokio::time::sleep(timeout) => {
+                        break
                     }
-                }
+                };
             }
         }
     }
 
-    fn handle_sdp_event<'a>(
-        event: ezk_session::AsyncEvent,
-        rtp_session: &mut MutexGuard<'a, Option<RtpSession>>,
-    ) {
+    fn handle_sdp_event(event: ezk_session::AsyncEvent, audio_sink: &Arc<rodio::Sink>) {
         match event {
-            AsyncEvent::MediaAdded(event) => {
-                let ssrc = Ssrc(rand::rng().next_u32());
-                let clock_rate = event.codec.clock_rate;
-                **rtp_session = Some(RtpSession::new(ssrc, clock_rate));
-            }
-            AsyncEvent::MediaRemoved(_) => {
-                **rtp_session = None;
-            }
+            AsyncEvent::MediaAdded(_event) => {}
+            AsyncEvent::MediaRemoved(_) => {}
             AsyncEvent::ReceiveRTP { media_id, packet } => {
-                rtp_session.as_mut().unwrap().recv_rtp(packet);
+                println!(
+                    "Packet: {:?} [{:?}] s: {}",
+                    packet.sequence_number,
+                    packet.timestamp,
+                    packet.payload.len(),
+                );
+                let data = packet
+                    .payload
+                    .iter()
+                    .map(|&b| ezk_g711::alaw::decode(b))
+                    .collect::<Vec<_>>();
+
+                let buffer = rodio::buffer::SamplesBuffer::new(1u16, 8000, data);
+                audio_sink.append(buffer);
+                // audio_sink.sleep_until_end();
             }
             _ => {}
         }
@@ -234,5 +231,27 @@ pub mod registration {
             settings.expiry,
         );
         Ok(Registrator::new(endpoint, registration))
+    }
+}
+
+pub struct AudioPlayer {
+    _output_stream: rodio::OutputStream,
+    _output_stream_h: rodio::OutputStreamHandle,
+    sink: Arc<rodio::Sink>,
+}
+
+impl AudioPlayer {
+    pub fn build() -> Result<Self, Box<dyn Error + Send + Sync>> {
+        let (_output_stream, _output_stream_h) = rodio::OutputStream::try_default()?;
+        let sink = Arc::new(rodio::Sink::try_new(&_output_stream_h)?);
+        Ok(Self {
+            _output_stream,
+            _output_stream_h,
+            sink,
+        })
+    }
+
+    pub fn clone_sink(&self) -> Arc<rodio::Sink> {
+        Arc::clone(&self.sink)
     }
 }

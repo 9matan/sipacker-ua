@@ -21,14 +21,14 @@ pub fn run_app(_args: Args) -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 async fn run_app_inner() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let ua_ip: Ipv4Addr = "192.168.3.94".parse().unwrap();
-    let sip_ip: Ipv4Addr = "192.168.3.97".parse().unwrap();
+    let ua_ip: Ipv4Addr = "192.168.0.117".parse().unwrap();
+    let sip_ip: Ipv4Addr = "192.168.0.90".parse().unwrap();
     let mut user_agent = sipacker::user_agent::UserAgent::build((ua_ip, 5060).into()).await?;
 
     let reg_settings = sipacker::user_agent::registration::Settings::builder()
-        .sip_server_port(5160)
+        .sip_server_port(5170)
         .sip_registrar_ip(sip_ip.into())
-        .extension_number(3333)
+        .extension_number(2502)
         .expiry(Duration::from_secs(600))
         .build();
 
@@ -41,6 +41,7 @@ async fn run_app_inner() -> Result<(), Box<dyn Error + Send + Sync>> {
                 println!("Incoming call from {:#?}", incoming.incoming_client);
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 user_agent.accept_incoming_call().await;
+                println!("The call is accepted");
             }
         }
 
