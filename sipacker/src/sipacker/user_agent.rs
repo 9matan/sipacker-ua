@@ -3,6 +3,7 @@ use crate::sipacker::invite_acceptor_layer::{InviteAcceptLayer, InviteAction};
 use crate::sipacker::registrator::{RegistrationStatusKind, Registrator};
 use crate::sipacker::user_agent_event::UserAgentEvent;
 
+use ezk_rtp::RtpPacket;
 use ezk_session::{AsyncSdpSession, Codec, Codecs};
 use ezk_sip_core::{transport::udp::Udp, Endpoint};
 use ezk_sip_types::header::typed::Contact;
@@ -21,11 +22,13 @@ pub struct UserAgent {
     sdp_session: Arc<Mutex<AsyncSdpSession>>,
     socketaddr: SocketAddr,
     event_receiver: mpsc::Receiver<UserAgentEvent>,
-    audio_output_stream: audio::OutputStream,
 }
 
 impl UserAgent {
-    pub async fn build(socketaddr: SocketAddr) -> UAResult<UserAgent> {
+    pub async fn build(
+        socketaddr: SocketAddr,
+        audio_output_sender: mpsc::Sender<RtpPacket>,
+    ) -> UAResult<UserAgent> {
         let options = ezk_session::Options {
             offer_transport: ezk_session::TransportType::Rtp,
             ..Default::default()
@@ -48,8 +51,7 @@ impl UserAgent {
         Udp::spawn(&mut builder, (socketaddr.ip(), socketaddr.port())).await?;
         let sip_endpoint = builder.build();
 
-        let audio_output_stream = audio::OutputStream::build()?;
-        sdp::run_sdp_event_handler(Arc::clone(&sdp_session), audio_output_stream.create_sink()?);
+        sdp::run_sdp_event_handler(Arc::clone(&sdp_session), audio_output_sender);
 
         Ok(UserAgent {
             sip_endpoint,
@@ -57,7 +59,6 @@ impl UserAgent {
             registrator: None,
             socketaddr,
             event_receiver,
-            audio_output_stream,
         })
     }
 
@@ -131,14 +132,14 @@ mod sdp {
 
     pub fn run_sdp_event_handler(
         sdp_session: Arc<Mutex<AsyncSdpSession>>,
-        audio_output_sink: audio::OutputSink,
+        audio_output_sender: mpsc::Sender<RtpPacket>,
     ) {
-        tokio::spawn(sdp_event_handler_task(sdp_session, audio_output_sink));
+        tokio::spawn(sdp_event_handler_task(sdp_session, audio_output_sender));
     }
 
     async fn sdp_event_handler_task(
         sdp_session: Arc<Mutex<AsyncSdpSession>>,
-        audio_output_sink: audio::OutputSink,
+        mut audio_output_sender: mpsc::Sender<RtpPacket>,
     ) {
         loop {
             tokio::time::sleep(Duration::from_micros(10)).await;
@@ -148,7 +149,7 @@ mod sdp {
                 select! {
                     event = sdp_session.run() => {
                         if let Ok(event) = event {
-                            handle_sdp_event(event, &audio_output_sink);
+                            handle_sdp_event(event, &mut audio_output_sender).await;
                         }
                     }
                     _ = tokio::time::sleep(timeout) => {
@@ -159,10 +160,13 @@ mod sdp {
         }
     }
 
-    fn handle_sdp_event(event: ezk_session::AsyncEvent, audio_output_sink: &audio::OutputSink) {
+    async fn handle_sdp_event(
+        event: ezk_session::AsyncEvent,
+        audio_output_sender: &mut mpsc::Sender<RtpPacket>,
+    ) {
         match event {
             AsyncEvent::ReceiveRTP { media_id, packet } => {
-                audio_output_sink.play_g711_alaw(packet.payload);
+                let _ = audio_output_sender.send(packet).await;
             }
             _ => {}
         }
