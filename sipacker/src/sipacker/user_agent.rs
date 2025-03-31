@@ -16,6 +16,8 @@ use tokio::{select, sync::mpsc, sync::Mutex};
 
 type UAResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
+static RTP_PAYLOAD_SIZE: usize = 160;
+
 pub struct UserAgent {
     sip_endpoint: Endpoint,
     registrator: Option<Arc<Registrator>>,
@@ -27,7 +29,8 @@ pub struct UserAgent {
 impl UserAgent {
     pub async fn build(
         socketaddr: SocketAddr,
-        audio_output_sender: mpsc::Sender<RtpPacket>,
+        media_sender: mpsc::Sender<bytes::Bytes>,
+        media_receiver: mpsc::Receiver<bytes::Bytes>,
     ) -> UAResult<UserAgent> {
         let options = ezk_session::Options {
             offer_transport: ezk_session::TransportType::Rtp,
@@ -51,7 +54,7 @@ impl UserAgent {
         Udp::spawn(&mut builder, (socketaddr.ip(), socketaddr.port())).await?;
         let sip_endpoint = builder.build();
 
-        sdp::run_sdp_event_handler(Arc::clone(&sdp_session), audio_output_sender);
+        sdp::run_sdp_handler(Arc::clone(&sdp_session), media_sender, media_receiver);
 
         Ok(UserAgent {
             sip_endpoint,
@@ -128,47 +131,124 @@ impl UserAgent {
 
 mod sdp {
     use super::*;
-    use ezk_session::AsyncEvent;
+    use ezk_rtp::{RtpExtensions, RtpTimestamp, SequenceNumber, Ssrc};
+    use ezk_session::{AsyncEvent, MediaId};
 
-    pub fn run_sdp_event_handler(
+    pub fn run_sdp_handler(
         sdp_session: Arc<Mutex<AsyncSdpSession>>,
-        audio_output_sender: mpsc::Sender<RtpPacket>,
+        media_sender: mpsc::Sender<bytes::Bytes>,
+        media_receiver: mpsc::Receiver<bytes::Bytes>,
     ) {
-        tokio::spawn(sdp_event_handler_task(sdp_session, audio_output_sender));
+        tokio::spawn(async {
+            SDPHandler::new(media_sender, media_receiver)
+                .run(sdp_session)
+                .await;
+        });
     }
 
-    async fn sdp_event_handler_task(
-        sdp_session: Arc<Mutex<AsyncSdpSession>>,
-        mut audio_output_sender: mpsc::Sender<RtpPacket>,
-    ) {
-        loop {
-            tokio::time::sleep(Duration::from_micros(10)).await;
-            let mut sdp_session = sdp_session.lock().await;
-            loop {
-                let timeout = Duration::from_millis(10);
-                select! {
-                    event = sdp_session.run() => {
-                        if let Ok(event) = event {
-                            handle_sdp_event(event, &mut audio_output_sender).await;
-                        }
-                    }
-                    _ = tokio::time::sleep(timeout) => {
-                        break
-                    }
-                };
+    struct SDPHandler {
+        media_sender: mpsc::Sender<bytes::Bytes>,
+        media_receiver: mpsc::Receiver<bytes::Bytes>,
+        rtp_sequence_number: SequenceNumber,
+        rtp_timestamp: RtpTimestamp,
+        rtp_pt: u8,
+        active_media_id: Option<MediaId>,
+    }
+
+    impl SDPHandler {
+        fn new(
+            media_sender: mpsc::Sender<bytes::Bytes>,
+            media_receiver: mpsc::Receiver<bytes::Bytes>,
+        ) -> Self {
+            Self {
+                media_sender,
+                media_receiver,
+                rtp_sequence_number: SequenceNumber(0),
+                rtp_timestamp: RtpTimestamp(0),
+                rtp_pt: 8,
+                active_media_id: None,
             }
         }
-    }
 
-    async fn handle_sdp_event(
-        event: ezk_session::AsyncEvent,
-        audio_output_sender: &mut mpsc::Sender<RtpPacket>,
-    ) {
-        match event {
-            AsyncEvent::ReceiveRTP { media_id, packet } => {
-                let _ = audio_output_sender.send(packet).await;
+        fn has_active_media(&self) -> bool {
+            self.active_media_id.is_some()
+        }
+
+        async fn run(&mut self, sdp_session: Arc<Mutex<AsyncSdpSession>>) {
+            loop {
+                tokio::time::sleep(Duration::from_micros(10)).await;
+                let mut sdp_session = sdp_session.lock().await;
+                loop {
+                    let timeout = Duration::from_millis(10);
+                    self.handle_input_media(&mut (*sdp_session));
+                    select! {
+                        event = sdp_session.run() => {
+                            if let Ok(event) = event {
+                                self.handle_sdp_event(event).await;
+                            }
+                        }
+                        _ = tokio::time::sleep(timeout) => {
+                            break
+                        }
+                    };
+                }
             }
-            _ => {}
+        }
+
+        async fn handle_sdp_event(&mut self, event: ezk_session::AsyncEvent) {
+            match event {
+                AsyncEvent::MediaAdded(ev) => {
+                    self.active_media_id = Some(ev.id);
+                }
+                AsyncEvent::MediaRemoved(_id) => {
+                    self.active_media_id = None;
+                }
+                AsyncEvent::ReceiveRTP { media_id, packet } => {
+                    let _ = self.media_sender.send(packet.payload).await;
+                }
+                _ => {}
+            }
+        }
+
+        fn handle_input_media(&mut self, sdp_session: &mut AsyncSdpSession) {
+            loop {
+                let data = self.media_receiver.try_recv();
+                if let Ok(mut data) = data {
+                    if self.has_active_media() {
+                        while data.len() > RTP_PAYLOAD_SIZE {
+                            let data_chunk = data.split_to(RTP_PAYLOAD_SIZE);
+                            self.create_and_send_rtp_packet(sdp_session, data_chunk);
+                        }
+                        self.create_and_send_rtp_packet(sdp_session, data);
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+
+        fn create_and_send_rtp_packet(
+            &mut self,
+            sdp_session: &mut AsyncSdpSession,
+            payload: bytes::Bytes,
+        ) {
+            let payload_len = payload.len();
+            let packet = RtpPacket {
+                pt: self.rtp_pt,
+                sequence_number: self.rtp_sequence_number,
+                timestamp: self.rtp_timestamp,
+                payload: payload,
+                ssrc: Ssrc(0),
+                extensions: RtpExtensions::default(),
+            };
+
+            self.rtp_sequence_number = SequenceNumber(self.rtp_sequence_number.0 + 1);
+            self.rtp_timestamp = RtpTimestamp(self.rtp_timestamp.0 + payload_len as u32);
+
+            sdp_session.send_rtp(
+                self.active_media_id.expect("Invalid active media id"),
+                packet,
+            );
         }
     }
 }

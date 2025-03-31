@@ -21,13 +21,15 @@ pub fn run_app(_args: Args) -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 async fn run_app_inner() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let (audio_out_tx, audio_out_rx) = tokio::sync::mpsc::channel(100);
-    let audio = sipacker::audio::AudioSystem::build(audio_out_rx)?;
+    let mut audio_system = sipacker::audio::AudioSystem::build()?;
+    let audio_sender = audio_system.create_output_stream()?;
+    let audio_receiver = audio_system.create_input_stream()?;
 
     let ua_ip: Ipv4Addr = "192.168.0.117".parse().unwrap();
     let sip_ip: Ipv4Addr = "192.168.0.90".parse().unwrap();
     let mut user_agent =
-        sipacker::user_agent::UserAgent::build((ua_ip, 5060).into(), audio_out_tx).await?;
+        sipacker::user_agent::UserAgent::build((ua_ip, 5060).into(), audio_sender, audio_receiver)
+            .await?;
 
     let reg_settings = sipacker::user_agent::registration::Settings::builder()
         .sip_server_port(5170)
