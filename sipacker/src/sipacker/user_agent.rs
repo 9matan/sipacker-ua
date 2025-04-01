@@ -1,237 +1,174 @@
-use crate::sipacker::audio;
-use crate::sipacker::invite_acceptor_layer::{InviteAcceptLayer, InviteAction};
-use crate::sipacker::registrator::{RegistrationStatusKind, Registrator};
-use crate::sipacker::user_agent_event::UserAgentEvent;
+use std::net::{IpAddr, SocketAddr};
 
-use ezk_rtp::RtpPacket;
-use ezk_session::{AsyncSdpSession, Codec, Codecs};
-use ezk_sip_core::{transport::udp::Udp, Endpoint};
-use ezk_sip_types::header::typed::Contact;
-use ezk_sip_types::uri::sip::SipUri;
-use ezk_sip_types::uri::NameAddr;
-use ezk_sip_ua::{dialog::DialogLayer, invite::InviteLayer};
-use simple_error::SimpleError;
-use std::{error::Error, net::SocketAddr, sync::Arc, time::Duration};
-use tokio::{select, sync::mpsc, sync::Mutex};
-
-type UAResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
-
-static RTP_PAYLOAD_SIZE: usize = 160;
+use anyhow::Result;
+use bytes::Bytes;
+use ezk_rtc::AsyncSdpSession;
+use ezk_rtc_proto::{BundlePolicy, Options, RtcpMuxPolicy, TransportType};
+use ezk_sip::{Client, MediaSession, RegistrarConfig, Registration};
+use ezk_sip_auth::{DigestAuthenticator, DigestCredentials};
+use tokio::sync::mpsc;
 
 pub struct UserAgent {
-    sip_endpoint: Endpoint,
-    registrator: Option<Arc<Registrator>>,
-    sdp_session: Arc<Mutex<AsyncSdpSession>>,
-    socketaddr: SocketAddr,
-    event_receiver: mpsc::Receiver<UserAgentEvent>,
+    sip_client: Client,
+    ip_addr: IpAddr,
+    reg_data: Option<RegData>,
+    out_call: Option<out_call::OutCall>,
+}
+
+struct RegData {
+    pub registration: Registration,
+    pub credentials: DigestCredentials,
+    pub registrar_socket: SocketAddr,
+    pub user_name: String,
 }
 
 impl UserAgent {
-    pub async fn build(
-        socketaddr: SocketAddr,
-        media_sender: mpsc::Sender<bytes::Bytes>,
-        media_receiver: mpsc::Receiver<bytes::Bytes>,
-    ) -> UAResult<UserAgent> {
-        let options = ezk_session::Options {
-            offer_transport: ezk_session::TransportType::Rtp,
-            ..Default::default()
-        };
-        let mut sdp_session = AsyncSdpSession::new(socketaddr.ip(), options);
-        let codecs = Codecs::new(ezk_session::MediaType::Audio).with_codec(Codec::PCMA);
-        sdp_session
-            .add_local_media(codecs, 1, ezk_session::Direction::SendRecv)
-            .ok_or(SimpleError::new("Could not create a local media"))?;
-        let sdp_session = Arc::new(Mutex::new(sdp_session));
+    pub async fn build(udp_socket: SocketAddr) -> Result<Self> {
+        let ip_addr = udp_socket.ip();
+        let sip_client = ezk_sip::ClientBuilder::new()
+            .listen_udp(udp_socket)
+            .build()
+            .await?;
 
-        let (event_sender, event_receiver) = mpsc::channel(20);
-        let mut builder = Endpoint::builder();
-        builder.add_layer(DialogLayer::default());
-        builder.add_layer(InviteLayer::default());
-        builder.add_layer(InviteAcceptLayer::new(
-            Arc::clone(&sdp_session),
-            event_sender,
-        ));
-        Udp::spawn(&mut builder, (socketaddr.ip(), socketaddr.port())).await?;
-        let sip_endpoint = builder.build();
-
-        sdp::run_sdp_handler(Arc::clone(&sdp_session), media_sender, media_receiver);
-
-        Ok(UserAgent {
-            sip_endpoint,
-            sdp_session,
-            registrator: None,
-            socketaddr,
-            event_receiver,
+        Ok(Self {
+            sip_client,
+            ip_addr,
+            reg_data: None,
+            out_call: None,
         })
     }
 
-    pub async fn register(&mut self, settings: registration::Settings) -> UAResult<()> {
-        log::info!("Registering the UA ...");
-
-        let contact = {
-            let contact_ip = self.socketaddr.ip();
-            let contact_port = self.socketaddr.port();
-            let number = settings.extension_number.to_string();
-
-            let contact = format!("sip:{number}@{contact_ip}:{contact_port}");
-            let contact: SipUri = contact.parse()?;
-            Contact::new(NameAddr::uri(contact))
+    pub async fn register(
+        &mut self,
+        user_name: &str,
+        registrar_socket: SocketAddr,
+        credentials: DigestCredentials,
+    ) -> Result<()> {
+        let registrar = misc::make_sip_uri(&user_name, &registrar_socket)?;
+        let user_name = user_name.to_owned();
+        let config = RegistrarConfig {
+            registrar,
+            username: user_name.clone(),
+            override_contact: None,
+            override_id: None,
         };
+        let authenticator = DigestAuthenticator::new(credentials.clone());
+        let registration = self
+            .sip_client
+            .register(config, authenticator)
+            .await
+            .map_err(|err| anyhow::Error::msg(err.to_string()))?;
 
-        let registrator =
-            registration::build(self.sip_endpoint.clone(), settings, self.socketaddr).await?;
-        Arc::clone(&registrator).run_registration().await;
-        let reg_status = registrator.wait_for_registration_response().await;
-        self.registrator = Some(registrator);
-
-        let reason = reg_status.reason.as_str();
-        match reg_status.kind {
-            RegistrationStatusKind::Successful => {
-                log::info!("The agent is successfuly registered");
-
-                self.sip_endpoint
-                    .layer::<InviteAcceptLayer>()
-                    .set_outgoing_contact(contact)
-                    .await;
-            }
-            RegistrationStatusKind::Unregistered => {
-                log::warn!(reason:%; "The agent is unregistered");
-            }
-            RegistrationStatusKind::Failed => log::error!(reason:%; "The agent failed to register"),
+        let reg_data = RegData {
+            registration,
+            credentials,
+            registrar_socket,
+            user_name: user_name,
         };
+        self.reg_data = Some(reg_data);
+        Ok(())
+    }
+
+    pub async fn make_call(
+        &mut self,
+        target_user_name: &str,
+        audio_sender: mpsc::Sender<Bytes>,
+        audio_receiver: mpsc::Receiver<Bytes>,
+    ) -> Result<()> {
+        let reg_data = self
+            .reg_data
+            .as_ref()
+            .ok_or(anyhow::Error::msg("The user agent is not registered"))?;
+
+        let target = misc::make_sip_uri(&target_user_name, &reg_data.registrar_socket)?;
+        let authenticator = reg_data.create_authenticator();
+        let media = self.create_media()?;
+        let out_call = reg_data
+            .registration
+            .make_call(target, authenticator, media)
+            .await?;
+        let out_call = out_call::OutCall::new(out_call, audio_sender, audio_receiver);
+        self.out_call = Some(out_call);
 
         Ok(())
     }
 
-    pub async fn unregister(&mut self) {
-        if let Some(registrator) = &self.registrator {
-            Arc::clone(&registrator).stop_registration().await;
-            self.registrator = None;
+    pub async fn run(&mut self) -> Result<()> {
+        if let Some(call) = self.out_call.as_mut() {
+            call.run().await
+        } else {
+            Ok(())
         }
     }
 
-    pub async fn run(&mut self, timeout: Duration) -> Option<UserAgentEvent> {
-        select! {
-            event = self.event_receiver.recv() => {
-                event
-            }
-            _ = tokio::time::sleep(timeout) => {
-                None
-            }
-        }
-    }
+    fn create_media(&self) -> Result<MediaSession> {
+        let options = Options {
+            offer_transport: TransportType::Rtp,
+            offer_ice: false,
+            offer_avpf: false,
+            rtcp_mux_policy: RtcpMuxPolicy::Negotiate,
+            bundle_policy: BundlePolicy::MaxCompat,
+        };
+        let mut sdp_session = AsyncSdpSession::new(self.ip_addr, options);
 
-    pub async fn accept_incoming_call(&self) {
-        self.sip_endpoint
-            .layer::<InviteAcceptLayer>()
-            .set_invite_action(InviteAction::Accept)
-            .await;
+        let audio_media_id = sdp_session
+            .add_local_media(
+                ezk_rtc_proto::Codecs::new(ezk_sdp_types::MediaType::Audio)
+                    .with_codec(ezk_rtc_proto::Codec::PCMA),
+                1,
+                ezk_rtc_proto::Direction::SendRecv,
+            )
+            .ok_or(anyhow::Error::msg("Could not create Audio media"))?;
+        sdp_session.add_media(audio_media_id, ezk_rtc_proto::Direction::SendRecv);
+
+        Ok(MediaSession::new(sdp_session))
     }
 }
 
-mod sdp {
-    use super::*;
-    use ezk_rtp::{RtpExtensions, RtpTimestamp, SequenceNumber, Ssrc};
-    use ezk_session::{AsyncEvent, MediaId};
-
-    pub fn run_sdp_handler(
-        sdp_session: Arc<Mutex<AsyncSdpSession>>,
-        media_sender: mpsc::Sender<bytes::Bytes>,
-        media_receiver: mpsc::Receiver<bytes::Bytes>,
-    ) {
-        tokio::spawn(async {
-            SDPHandler::new(media_sender, media_receiver)
-                .run(sdp_session)
-                .await;
-        });
+impl RegData {
+    fn create_authenticator(&self) -> DigestAuthenticator {
+        DigestAuthenticator::new(self.credentials.clone())
     }
+}
 
-    struct SDPHandler {
-        media_sender: mpsc::Sender<bytes::Bytes>,
-        media_receiver: mpsc::Receiver<bytes::Bytes>,
+mod misc {
+    use std::net::SocketAddr;
+
+    use anyhow::Result;
+    use ezk_sip_types::uri::sip::{InvalidSipUri, SipUri};
+
+    pub fn make_sip_uri(user_name: &str, sip_socket: &SocketAddr) -> Result<SipUri> {
+        format!(
+            "sip:{}@{}:{}",
+            user_name,
+            sip_socket.ip(),
+            sip_socket.port()
+        )
+        .parse()
+        .map_err(|err: InvalidSipUri| anyhow::Error::msg(err.to_string()))
+    }
+}
+
+mod rtp {
+    use bytes::Bytes;
+    use ezk_rtp::{RtpExtensions, RtpPacket, RtpTimestamp, SequenceNumber, Ssrc};
+
+    pub struct RTPFactory {
         rtp_sequence_number: SequenceNumber,
         rtp_timestamp: RtpTimestamp,
         rtp_pt: u8,
-        active_media_id: Option<MediaId>,
     }
 
-    impl SDPHandler {
-        fn new(
-            media_sender: mpsc::Sender<bytes::Bytes>,
-            media_receiver: mpsc::Receiver<bytes::Bytes>,
-        ) -> Self {
+    impl RTPFactory {
+        pub fn new(rtp_pt: u8) -> Self {
             Self {
-                media_sender,
-                media_receiver,
                 rtp_sequence_number: SequenceNumber(0),
                 rtp_timestamp: RtpTimestamp(0),
-                rtp_pt: 8,
-                active_media_id: None,
+                rtp_pt,
             }
         }
 
-        fn has_active_media(&self) -> bool {
-            self.active_media_id.is_some()
-        }
-
-        async fn run(&mut self, sdp_session: Arc<Mutex<AsyncSdpSession>>) {
-            loop {
-                tokio::time::sleep(Duration::from_micros(10)).await;
-                let mut sdp_session = sdp_session.lock().await;
-                loop {
-                    let timeout = Duration::from_millis(10);
-                    self.handle_input_media(&mut (*sdp_session));
-                    select! {
-                        event = sdp_session.run() => {
-                            if let Ok(event) = event {
-                                self.handle_sdp_event(event).await;
-                            }
-                        }
-                        _ = tokio::time::sleep(timeout) => {
-                            break
-                        }
-                    };
-                }
-            }
-        }
-
-        async fn handle_sdp_event(&mut self, event: ezk_session::AsyncEvent) {
-            match event {
-                AsyncEvent::MediaAdded(ev) => {
-                    self.active_media_id = Some(ev.id);
-                }
-                AsyncEvent::MediaRemoved(_id) => {
-                    self.active_media_id = None;
-                }
-                AsyncEvent::ReceiveRTP { media_id, packet } => {
-                    let _ = self.media_sender.send(packet.payload).await;
-                }
-                _ => {}
-            }
-        }
-
-        fn handle_input_media(&mut self, sdp_session: &mut AsyncSdpSession) {
-            loop {
-                let data = self.media_receiver.try_recv();
-                if let Ok(mut data) = data {
-                    if self.has_active_media() {
-                        while data.len() > RTP_PAYLOAD_SIZE {
-                            let data_chunk = data.split_to(RTP_PAYLOAD_SIZE);
-                            self.create_and_send_rtp_packet(sdp_session, data_chunk);
-                        }
-                        self.create_and_send_rtp_packet(sdp_session, data);
-                    }
-                } else {
-                    break;
-                }
-            }
-        }
-
-        fn create_and_send_rtp_packet(
-            &mut self,
-            sdp_session: &mut AsyncSdpSession,
-            payload: bytes::Bytes,
-        ) {
+        pub fn create_rtp_packet(&mut self, payload: Bytes) -> RtpPacket {
             let payload_len = payload.len();
             let packet = RtpPacket {
                 pt: self.rtp_pt,
@@ -244,62 +181,122 @@ mod sdp {
 
             self.rtp_sequence_number = SequenceNumber(self.rtp_sequence_number.0 + 1);
             self.rtp_timestamp = RtpTimestamp(self.rtp_timestamp.0 + payload_len as u32);
-
-            sdp_session.send_rtp(
-                self.active_media_id.expect("Invalid active media id"),
-                packet,
-            );
+            packet
         }
     }
 }
 
-pub mod registration {
-    use super::*;
-    use ezk_sip_types::{
-        header::typed::Contact,
-        uri::{sip::SipUri, NameAddr},
-    };
-    use ezk_sip_ua::register::Registration;
-    use std::net::IpAddr;
-    use typed_builder::TypedBuilder;
+mod out_call {
+    use super::rtp;
 
-    #[non_exhaustive]
-    #[derive(TypedBuilder, Clone)]
-    pub struct Settings {
-        #[builder(default = 5060)]
-        pub sip_server_port: u16,
-        pub sip_registrar_ip: IpAddr,
-        pub extension_number: u64,
-        #[builder(default=Duration::from_secs(600))]
-        pub expiry: Duration,
+    use std::time::Duration;
+
+    use anyhow::Result;
+    use bytes::Bytes;
+    use ezk_rtp::RtpPacket;
+    use ezk_sip::{Call, CallEvent, MediaSession};
+    use tokio::{sync::mpsc, task::JoinHandle};
+
+    pub struct OutCall {
+        audio_sender: Option<mpsc::Sender<Bytes>>,
+        audio_receiver: Option<mpsc::Receiver<Bytes>>,
+        calling_task: Option<JoinHandle<Result<Call<MediaSession>>>>,
+        call: Option<Call<MediaSession>>,
+        sender_task: Option<JoinHandle<()>>,
+        receiver_task: Option<JoinHandle<()>>,
     }
 
-    pub(super) async fn build(
-        endpoint: Endpoint,
-        settings: Settings,
-        agent_socketaddr: SocketAddr,
-    ) -> Result<Arc<Registrator>, Box<dyn Error + Send + Sync>> {
-        let contact_ip = agent_socketaddr.ip();
-        let contact_port = agent_socketaddr.port();
-        let number = settings.extension_number.to_string();
-        let sip_ip = settings.sip_registrar_ip.to_string();
-        let sip_port = settings.sip_server_port.to_string();
+    impl OutCall {
+        pub fn new(
+            out_call: ezk_sip::OutboundCall<MediaSession>,
+            audio_sender: mpsc::Sender<Bytes>,
+            audio_receiver: mpsc::Receiver<Bytes>,
+        ) -> Self {
+            let calling_task = tokio::spawn(Self::run_calling_task(out_call));
+            let calling_task = Some(calling_task);
+            let audio_sender = Some(audio_sender);
+            let audio_receiver = Some(audio_receiver);
+            Self {
+                audio_sender,
+                audio_receiver,
+                calling_task,
+                call: None,
+                sender_task: None,
+                receiver_task: None,
+            }
+        }
 
-        let id = format!("sip:{number}@{contact_ip}");
-        let contact = format!("sip:{number}@{contact_ip}:{contact_port}");
-        let registrar = format!("sip:{number}@{sip_ip}:{sip_port}");
-        log::debug!(id:%, contact:%, registrar:%; "Creating registrator");
+        async fn run_calling_task(
+            mut out_call: ezk_sip::OutboundCall<MediaSession>,
+        ) -> Result<Call<MediaSession>> {
+            let completed_call =
+                match tokio::time::timeout(Duration::from_secs(10), out_call.wait_for_completion())
+                    .await
+                {
+                    Ok(completed) => completed.map_err(|err| anyhow::Error::msg(err.to_string())),
+                    Err(_) => {
+                        out_call.cancel().await?;
+                        Err(anyhow::Error::msg("Outbound call is timed out"))
+                    }
+                }?;
 
-        let id: SipUri = id.parse()?;
-        let contact: SipUri = contact.parse()?;
-        let registrar: SipUri = registrar.parse()?;
+            completed_call
+                .finish()
+                .await
+                .map_err(|err| anyhow::Error::msg(err.to_string()))
+        }
 
-        let registration = Registration::new(
-            NameAddr::uri(id),
-            Contact::new(NameAddr::uri(contact)),
-            registrar.into(),
-            settings.expiry,
-        );
-        Ok(Registrator::new(endpoint, registration))
+        pub async fn cancel(self) {
+            if let Some(calling_task) = self.calling_task {
+                calling_task.abort();
+                let _ = calling_task.await;
+            }
+
+            if let Some(sender_task) = self.sender_task {
+                sender_task.abort();
+                let _ = sender_task.await;
+            }
+
+            if let Some(receiver_task) = self.receiver_task {
+                receiver_task.abort();
+                let _ = receiver_task.await;
+            }
+        }
+
+        pub async fn run(&mut self) -> Result<()> {
+            if self.calling_task.as_ref().is_some_and(|t| t.is_finished()) {
+                let call = self.calling_task.take().unwrap().await??;
+                self.call = Some(call);
+            } else if let Some(call) = self.call.as_mut() {
+                match call.run().await? {
+                    CallEvent::Media(event) => match event {
+                        ezk_sip::MediaEvent::SenderAdded { mut sender, codec } => {
+                            let mut audio_receiver = self.audio_receiver.take().unwrap();
+                            let mut rtp_factory = rtp::RTPFactory::new(codec.pt);
+                            tokio::spawn(async move {
+                                while let Some(payload) = audio_receiver.recv().await {
+                                    let packet = rtp_factory.create_rtp_packet(payload);
+                                    let _ = sender.send(packet).await;
+                                }
+                            });
+                        }
+                        ezk_sip::MediaEvent::ReceiverAdded {
+                            mut receiver,
+                            codec,
+                        } => {
+                            let audio_sender = self.audio_sender.take().unwrap();
+                            tokio::spawn(async move {
+                                while let Some(packet) = receiver.recv().await {
+                                    let _ = audio_sender.try_send(packet.payload);
+                                }
+                            });
+                        }
+                    },
+                    CallEvent::Terminated => (),
+                }
+            }
+
+            Ok(())
+        }
     }
 }

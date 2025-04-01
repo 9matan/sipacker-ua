@@ -1,2 +1,3 @@
 [Ubuntu env]
-'cpal' requires alsa-sys. It leads to libasound2-dev (see https://github.com/RustAudio/rodio?tab=readme-ov-file#dependencies-linux-only)
+libasound2-dev
+libsrtp2-dev

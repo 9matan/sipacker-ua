@@ -1,13 +1,14 @@
+use crate::app::args::Args;
 use crate::sipacker;
-use crate::sipacker::user_agent_event::*;
+use crate::sipacker::user_agent::UserAgent;
 
-use super::args::Args;
-
-use std::error::Error;
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
-pub fn run_app(_args: Args) -> Result<(), Box<dyn Error + Send + Sync>> {
+use anyhow::Result;
+use ezk_sip_auth::{DigestCredentials, DigestUser};
+
+pub fn run_app(_args: Args) -> Result<()> {
     env_logger::init();
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -20,37 +21,34 @@ pub fn run_app(_args: Args) -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok(())
 }
 
-async fn run_app_inner() -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn run_app_inner() -> Result<()> {
     let mut audio_system = sipacker::audio::AudioSystem::build()?;
     let audio_sender = audio_system.create_output_stream()?;
     let audio_receiver = audio_system.create_input_stream()?;
 
     let ua_ip: Ipv4Addr = "192.168.0.117".parse().unwrap();
     let sip_ip: Ipv4Addr = "192.168.0.90".parse().unwrap();
-    let mut user_agent =
-        sipacker::user_agent::UserAgent::build((ua_ip, 5060).into(), audio_sender, audio_receiver)
-            .await?;
 
-    let reg_settings = sipacker::user_agent::registration::Settings::builder()
-        .sip_server_port(5170)
-        .sip_registrar_ip(sip_ip.into())
-        .extension_number(2502)
-        .expiry(Duration::from_secs(600))
-        .build();
+    let mut user_agent = UserAgent::build((ua_ip, 5060).into()).await?;
+    let mut credentials = DigestCredentials::new();
+    //credentials.set_default(DigestUser::new("2502", "2502"));
+    //credentials.add_for_realm("asterisk", DigestUser::new("2502", "2502"));
+    let registrar_socket = (sip_ip, 5170).into();
 
-    user_agent.register(reg_settings).await?;
+    user_agent
+        .register("2502", registrar_socket, credentials)
+        .await?;
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    user_agent
+        .make_call("2503", audio_sender, audio_receiver)
+        .await?;
 
     loop {
-        let user_agent_event = user_agent.run(Duration::from_millis(200)).await;
-        if let Some(user_agent_event) = user_agent_event {
-            if let UserAgentEventData::IncomingCall(incoming) = user_agent_event.data {
-                println!("Incoming call from {:#?}", incoming.incoming_client);
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                user_agent.accept_incoming_call().await;
-                println!("The call is accepted");
-            }
-        }
-
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        let _ = user_agent.run().await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
+
+    Ok(())
 }
