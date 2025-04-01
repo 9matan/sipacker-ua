@@ -95,7 +95,11 @@ impl UserAgent {
 
     pub async fn run(&mut self) -> Result<()> {
         if let Some(call) = self.out_call.as_mut() {
-            call.run().await
+            let is_finished = call.run().await?;
+            if is_finished {
+                self.out_call.take();
+            }
+            Ok(())
         } else {
             Ok(())
         }
@@ -153,13 +157,13 @@ mod rtp {
     use bytes::Bytes;
     use ezk_rtp::{RtpExtensions, RtpPacket, RtpTimestamp, SequenceNumber, Ssrc};
 
-    pub struct RTPFactory {
+    pub struct RtpFactory {
         rtp_sequence_number: SequenceNumber,
         rtp_timestamp: RtpTimestamp,
         rtp_pt: u8,
     }
 
-    impl RTPFactory {
+    impl RtpFactory {
         pub fn new(rtp_pt: u8) -> Self {
             Self {
                 rtp_sequence_number: SequenceNumber(0),
@@ -194,7 +198,7 @@ mod out_call {
     use anyhow::Result;
     use bytes::Bytes;
     use ezk_rtp::RtpPacket;
-    use ezk_sip::{Call, CallEvent, MediaSession};
+    use ezk_sip::{Call, CallEvent, Codec, MediaSession, RtpReceiver, RtpSender};
     use tokio::{sync::mpsc, task::JoinHandle};
 
     pub struct OutCall {
@@ -246,57 +250,77 @@ mod out_call {
                 .map_err(|err| anyhow::Error::msg(err.to_string()))
         }
 
-        pub async fn cancel(self) {
-            if let Some(calling_task) = self.calling_task {
+        pub async fn cancel(&mut self) {
+            if let Some(calling_task) = self.calling_task.take() {
                 calling_task.abort();
                 let _ = calling_task.await;
             }
 
-            if let Some(sender_task) = self.sender_task {
+            if let Some(sender_task) = self.sender_task.take() {
                 sender_task.abort();
                 let _ = sender_task.await;
             }
 
-            if let Some(receiver_task) = self.receiver_task {
+            if let Some(receiver_task) = self.receiver_task.take() {
                 receiver_task.abort();
                 let _ = receiver_task.await;
             }
         }
 
-        pub async fn run(&mut self) -> Result<()> {
+        pub async fn run(&mut self) -> Result<bool> {
             if self.calling_task.as_ref().is_some_and(|t| t.is_finished()) {
                 let call = self.calling_task.take().unwrap().await??;
                 self.call = Some(call);
             } else if let Some(call) = self.call.as_mut() {
                 match call.run().await? {
                     CallEvent::Media(event) => match event {
-                        ezk_sip::MediaEvent::SenderAdded { mut sender, codec } => {
-                            let mut audio_receiver = self.audio_receiver.take().unwrap();
-                            let mut rtp_factory = rtp::RTPFactory::new(codec.pt);
-                            tokio::spawn(async move {
-                                while let Some(payload) = audio_receiver.recv().await {
-                                    let packet = rtp_factory.create_rtp_packet(payload);
-                                    let _ = sender.send(packet).await;
-                                }
-                            });
+                        ezk_sip::MediaEvent::SenderAdded { sender, codec } => {
+                            self.run_sender_task(sender, codec);
                         }
-                        ezk_sip::MediaEvent::ReceiverAdded {
-                            mut receiver,
-                            codec,
-                        } => {
-                            let audio_sender = self.audio_sender.take().unwrap();
-                            tokio::spawn(async move {
-                                while let Some(packet) = receiver.recv().await {
-                                    let _ = audio_sender.try_send(packet.payload);
-                                }
-                            });
+                        ezk_sip::MediaEvent::ReceiverAdded { receiver, codec } => {
+                            self.run_receiver_task(receiver, codec);
                         }
                     },
-                    CallEvent::Terminated => (),
+                    CallEvent::Terminated => {
+                        self.cancel().await;
+                        return Ok(true);
+                    }
                 }
             }
 
-            Ok(())
+            Ok(false)
+        }
+
+        fn run_sender_task(&mut self, mut sender: RtpSender, codec: Codec) {
+            let mut audio_receiver = self.audio_receiver.take().unwrap();
+            let mut rtp_factory = rtp::RtpFactory::new(codec.pt);
+            let sender_task = tokio::spawn(async move {
+                loop {
+                    if let Some(payload) = audio_receiver.recv().await {
+                        let packet = rtp_factory.create_rtp_packet(payload);
+                        if let Err(_) = sender.send(packet).await {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            });
+            self.sender_task = Some(sender_task);
+        }
+
+        fn run_receiver_task(&mut self, mut receiver: RtpReceiver, _codec: Codec) {
+            let audio_sender = self.audio_sender.take().unwrap();
+            let receiver_task = tokio::spawn(async move {
+                loop {
+                    if let Some(packet) = receiver.recv().await {
+                        let _ = audio_sender.try_send(packet.payload);
+                    } else {
+                        break;
+                    }
+                }
+            });
+            self.receiver_task = Some(receiver_task);
         }
     }
 }

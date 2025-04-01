@@ -46,7 +46,7 @@ async fn run_app_inner() -> Result<()> {
         .await?;
 
     loop {
-        let _ = user_agent.run().await;
+        let _ = tokio::time::timeout(Duration::from_millis(100), user_agent.run()).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
