@@ -7,20 +7,3 @@ members = ["sipacker"]
 authors = ["oyavorovych"]
 edition = "2021"
 license = "MIT"
-
-[workspace.dependencies]
-ezk-internal = { package = "ezk-internal", version = "0.2.0", path = "../ezk/sip/internal" }
-ezk-sip-core = { package = "ezk-sip-core", version = "0.6.0", path = "../ezk/sip/sip-core" }
-ezk-sip-types = { package = "ezk-sip-types", version = "0.4.0", path = "../ezk/sip/sip-types" }
-ezk-sip-ua = { package = "ezk-sip-ua", version = "0.6.0", path = "../ezk/sip/sip-ua" }
-
-ezk-sdp-types = { package = "ezk-sdp-types", version = "0.5.0", path = "../ezk/media/sdp-types" }
-ezk-session = { package = "ezk-session", version = "0.1.0", path = "../ezk/media/session" }
-ezk-rtp = { package = "ezk-rtp", version = "0.3.0", path = "../ezk/media/rtp" }
-
-ezk-g711 = { package = "ezk-g711", version = "0.2.0", path = "../ezk-media/crates/ezk-g711" }
-
-
-rustls-pki-types = { version = "1", features = ["std"] }
-tokio-native-tls = { version = "0.3" }
-tokio-rustls = { version = "0.26", default-features = false }

@@ -1,5 +1,2 @@
 [Ubuntu env]
-'rodio' requires alsa-sys. It leads to libasound2-dev (see https://github.com/RustAudio/rodio?tab=readme-ov-file#dependencies-linux-only)
-'ffmpeg-next':
-    - sudo apt install libavcodec-dev libavformat-dev libavutil-dev pkg-config (see https://github.com/zmwangx/rust-ffmpeg/wiki/Notes-on-building#dependencies)
-    - sudo apt install libavfilter-dev libavdevice-dev ffmpeg
+'cpal' requires alsa-sys. It leads to libasound2-dev (see https://github.com/RustAudio/rodio?tab=readme-ov-file#dependencies-linux-only)

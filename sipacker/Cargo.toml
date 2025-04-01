@@ -21,14 +21,12 @@ simple-error = "0.3.1"
 env_logger = { version="0.11.6", features = ["unstable-kv"] }
 log = { version="0.4.26", features = ["kv"] }
 
+ezk-internal = { git = "https://github.com/kbalt/ezk", rev = "1f18c326df3244ce7b6461ad22919dec70ee7bc6"}
+ezk-rtp = { git = "https://github.com/kbalt/ezk", rev = "1f18c326df3244ce7b6461ad22919dec70ee7bc6" }
+ezk-sdp-types = { git = "https://github.com/kbalt/ezk", rev = "1f18c326df3244ce7b6461ad22919dec70ee7bc6"  }
+ezk-session = { git = "https://github.com/kbalt/ezk", rev = "1f18c326df3244ce7b6461ad22919dec70ee7bc6"  }
+ezk-sip-core = { git = "https://github.com/kbalt/ezk", rev = "1f18c326df3244ce7b6461ad22919dec70ee7bc6" }
+ezk-sip-types = { git = "https://github.com/kbalt/ezk", rev = "1f18c326df3244ce7b6461ad22919dec70ee7bc6" }
+ezk-sip-ua = { git = "https://github.com/kbalt/ezk", rev = "1f18c326df3244ce7b6461ad22919dec70ee7bc6" }
 
-ezk-internal.workspace = true
-ezk-sip-types.workspace = true
-ezk-sip-core.workspace = true
-ezk-sip-ua.workspace = true
-
-ezk-rtp.workspace = true
-ezk-sdp-types.workspace = true
-ezk-session.workspace = true
-
-ezk-g711.workspace = true
+ezk-g711 = { git = "https://github.com/kbalt/ezk-media.git", rev = "122d4a7ef1847a2919d9840ac83abc3ad7495aca" }
