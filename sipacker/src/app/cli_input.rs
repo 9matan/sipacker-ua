@@ -27,6 +27,7 @@ impl CliInputSystem {
     pub fn new(command_sender: mpsc::Sender<Command>) -> Self {
         let parsers = vec![
             parsers::Register::new().into(),
+            parsers::Unregister::new().into(),
             parsers::MakeCall::new().into(),
             parsers::TerminateCall::new().into(),
         ];
@@ -116,6 +117,7 @@ enum CommandParserError {
 
 enum CommandParser {
     Register(parsers::Register),
+    Unregister(parsers::Unregister),
     MakeCall(parsers::MakeCall),
     TerminateCall(parsers::TerminateCall),
 }
@@ -124,6 +126,7 @@ impl CommandParser {
     fn parse(&self, line: &str) -> Result<Command, CommandParserError> {
         match self {
             CommandParser::Register(parser) => parser.parse(line),
+            CommandParser::Unregister(parser) => parser.parse(line),
             CommandParser::MakeCall(parser) => parser.parse(line),
             CommandParser::TerminateCall(parser) => parser.parse(line),
         }
@@ -132,6 +135,7 @@ impl CommandParser {
     fn get_help(&self) -> &str {
         match self {
             CommandParser::Register(parser) => parser.get_help(),
+            CommandParser::Unregister(parser) => parser.get_help(),
             CommandParser::MakeCall(parser) => parser.get_help(),
             CommandParser::TerminateCall(parser) => parser.get_help(),
         }
@@ -232,6 +236,32 @@ mod parsers {
     impl From<Register> for CommandParser {
         fn from(value: Register) -> Self {
             CommandParser::Register(value)
+        }
+    }
+
+    pub struct Unregister;
+
+    impl Unregister {
+        pub fn new() -> Self {
+            Self {}
+        }
+
+        pub fn parse(&self, line: &str) -> Result<Command, CommandParserError> {
+            if !line.starts_with("unregister") {
+                Err(CommandParserError::Command)
+            } else {
+                Ok(commands::Unregister::new().into())
+            }
+        }
+
+        pub fn get_help(&self) -> &str {
+            "unregister"
+        }
+    }
+
+    impl From<Unregister> for CommandParser {
+        fn from(value: Unregister) -> Self {
+            CommandParser::Unregister(value)
         }
     }
 

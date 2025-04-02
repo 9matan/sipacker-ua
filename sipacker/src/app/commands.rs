@@ -6,6 +6,7 @@ use anyhow::Result;
 
 pub enum Command {
     Register(commands::Register),
+    Unregister(commands::Unregister),
     MakeCall(commands::MakeCall),
     TerminateCall(commands::TerminateCall),
 }
@@ -14,6 +15,7 @@ impl Command {
     pub async fn execute(self, app: &mut App) -> Result<()> {
         match self {
             Command::Register(cmd) => cmd.execute(app).await,
+            Command::Unregister(cmd) => cmd.execute(app).await,
             Command::MakeCall(cmd) => cmd.execute(app).await,
             Command::TerminateCall(cmd) => cmd.execute(app).await,
         }
@@ -24,6 +26,7 @@ impl Display for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Command::Register(cmd) => cmd.fmt(f),
+            Command::Unregister(cmd) => cmd.fmt(f),
             Command::MakeCall(cmd) => cmd.fmt(f),
             Command::TerminateCall(cmd) => cmd.fmt(f),
         }
@@ -75,6 +78,31 @@ pub(crate) mod commands {
                 "register {{user:{}; registrar:{}}}",
                 self.user_name, self.registrar
             )
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct Unregister;
+
+    impl Unregister {
+        pub fn new() -> Self {
+            Self {}
+        }
+
+        pub async fn execute(self, app: &mut App) -> Result<()> {
+            app.unregister().await
+        }
+    }
+
+    impl From<Unregister> for Command {
+        fn from(value: Unregister) -> Self {
+            Command::Unregister(value)
+        }
+    }
+
+    impl Display for Unregister {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "unregister")
         }
     }
 

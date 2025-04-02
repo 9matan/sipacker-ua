@@ -1,9 +1,10 @@
 use std::{
+    collections::VecDeque,
     net::{IpAddr, SocketAddr},
     time::Duration,
 };
 
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use bytes::Bytes;
 use ezk_rtc::AsyncSdpSession;
 use ezk_rtc_proto::{BundlePolicy, Options, RtcpMuxPolicy, TransportType};
@@ -11,17 +12,19 @@ use ezk_sip::{Client, MediaSession, RegistrarConfig, Registration};
 use ezk_sip_auth::{DigestAuthenticator, DigestCredentials};
 use tokio::sync::mpsc;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserAgentEvent {
     CallTerminated,
-    // RegistrationSuccessful,
-    // RegistrationFailed,
-    // Unregistered,
+    Calling,
+    CallEstablished,
+    Registered,
+    Unregistered,
 }
 
 pub struct UserAgent {
     sip_client: Client,
     ip_addr: IpAddr,
+    events: VecDeque<UserAgentEvent>,
     reg_data: Option<RegData>,
     out_call: Option<out_call::OutCall>,
 }
@@ -44,6 +47,7 @@ impl UserAgent {
         Ok(Self {
             sip_client,
             ip_addr,
+            events: VecDeque::new(),
             reg_data: None,
             out_call: None,
         })
@@ -85,7 +89,14 @@ impl UserAgent {
             user_name: user_name,
         };
         self.reg_data = Some(reg_data);
+
+        self.events.push_back(UserAgentEvent::Registered);
         Ok(())
+    }
+
+    pub fn unregister(&mut self) {
+        self.reg_data.take();
+        self.events.push_back(UserAgentEvent::Unregistered);
     }
 
     pub async fn make_call(
@@ -111,31 +122,8 @@ impl UserAgent {
             out_call::OutCall::new(out_call, audio_sender, audio_receiver, waiting_timeout);
         self.out_call = Some(out_call);
 
+        self.events.push_back(UserAgentEvent::Calling);
         Ok(())
-    }
-
-    pub async fn terminate_call(&mut self) -> Result<()> {
-        if let Some(mut call) = self.out_call.take() {
-            call.cancel().await;
-        }
-        Ok(())
-    }
-
-    pub async fn run(&mut self) -> Result<Option<UserAgentEvent>> {
-        if let Some(call) = self.out_call.as_mut() {
-            let is_finished = call.run().await.inspect_err(|err| {
-                log::warn!(err:%; "Outbound call.");
-            });
-
-            if is_finished.is_err() || is_finished.is_ok_and(|b| b) {
-                self.out_call.take();
-                Ok(Some(UserAgentEvent::CallTerminated))
-            } else {
-                Ok(None)
-            }
-        } else {
-            Ok(None)
-        }
     }
 
     fn create_media(&self) -> Result<MediaSession> {
@@ -159,6 +147,45 @@ impl UserAgent {
         sdp_session.add_media(audio_media_id, ezk_rtc_proto::Direction::SendRecv);
 
         Ok(MediaSession::new(sdp_session))
+    }
+
+    pub async fn terminate_call(&mut self) -> Result<()> {
+        if let Some(mut call) = self.out_call.take() {
+            call.cancel().await;
+            self.events.push_back(UserAgentEvent::CallTerminated);
+        }
+        Ok(())
+    }
+
+    pub async fn run(&mut self) -> Result<Option<UserAgentEvent>> {
+        let event = self.events.pop_front();
+        if event.is_some() {
+            return Ok(event);
+        }
+
+        self.update_call().await;
+        Ok(None)
+    }
+
+    async fn update_call(&mut self) {
+        if let Some(call) = self.out_call.as_mut() {
+            let event = call.run().await.inspect_err(|err| {
+                log::warn!(err:%; "Outbound call.");
+            });
+
+            let is_err = event.is_err();
+            let event = event.unwrap_or(None);
+
+            if event.is_some() {
+                self.events.push_back(event.clone().unwrap());
+            } else if is_err {
+                self.events.push_back(UserAgentEvent::CallTerminated);
+            }
+
+            if is_err || event == Some(UserAgentEvent::CallTerminated) {
+                self.out_call.take();
+            }
+        }
     }
 }
 
@@ -224,7 +251,7 @@ mod rtp {
 }
 
 mod out_call {
-    use super::rtp;
+    use super::{rtp, UserAgentEvent};
 
     use std::time::Duration;
 
@@ -316,28 +343,32 @@ mod out_call {
             }
         }
 
-        pub async fn run(&mut self) -> Result<bool> {
+        pub async fn run(&mut self) -> Result<Option<UserAgentEvent>> {
             if self.calling_task.as_ref().is_some_and(|t| t.is_finished()) {
                 let call = self.calling_task.take().unwrap().await??;
                 self.call = Some(call);
+                Ok(Some(UserAgentEvent::CallEstablished))
             } else if let Some(call) = self.call.as_mut() {
                 match call.run().await? {
-                    CallEvent::Media(event) => match event {
-                        ezk_sip::MediaEvent::SenderAdded { sender, codec } => {
-                            self.run_sender_task(sender, codec);
+                    CallEvent::Media(event) => {
+                        match event {
+                            ezk_sip::MediaEvent::SenderAdded { sender, codec } => {
+                                self.run_sender_task(sender, codec);
+                            }
+                            ezk_sip::MediaEvent::ReceiverAdded { receiver, codec } => {
+                                self.run_receiver_task(receiver, codec);
+                            }
                         }
-                        ezk_sip::MediaEvent::ReceiverAdded { receiver, codec } => {
-                            self.run_receiver_task(receiver, codec);
-                        }
-                    },
+                        Ok(None)
+                    }
                     CallEvent::Terminated => {
                         self.cancel().await;
-                        return Ok(true);
+                        Ok(Some(UserAgentEvent::CallTerminated))
                     }
                 }
+            } else {
+                Ok(None)
             }
-
-            Ok(false)
         }
 
         fn run_sender_task(&mut self, mut sender: RtpSender, codec: Codec) {

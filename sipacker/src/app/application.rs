@@ -89,12 +89,13 @@ impl App {
     }
 
     fn handle_ua_event(&mut self, event: UserAgentEvent) {
-        log::debug!(event:?; "Handling ua event.");
+        log::debug!(event:?; "Handling UA event.");
         match event {
             UserAgentEvent::CallTerminated => {
                 self.audio_system.destroy_input_stream();
                 self.audio_system.destroy_output_stream();
             }
+            _ => (),
         }
     }
 
@@ -136,9 +137,12 @@ impl App {
             ))
         } else {
             log::info!("Terminating the call.");
-            self.audio_system.destroy_input_stream();
-            self.audio_system.destroy_output_stream();
             self.user_agent.terminate_call().await
         }
+    }
+
+    pub(crate) async fn unregister(&mut self) -> Result<()> {
+        self.user_agent.unregister();
+        Ok(())
     }
 }
