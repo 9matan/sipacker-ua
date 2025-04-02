@@ -14,7 +14,7 @@ pub(crate) fn run_input_system() -> mpsc::Receiver<Command> {
 fn run_input_system_inner(command_sender: mpsc::Sender<Command>) {
     let mut input_system = CliInputSystem::new(command_sender);
     if let Err(err) = input_system.run() {
-        log::error!(err:%; "Cli input system.");
+        tracing::error!("CLI input system err: {err}");
     }
 }
 
@@ -38,7 +38,7 @@ impl CliInputSystem {
     }
 
     pub fn run(&mut self) -> Result<()> {
-        log::info!("Running the cli input system");
+        tracing::info!("Running the CLI input system");
         loop {
             let command = self.read_command();
             if let Some(command) = command {
@@ -54,7 +54,7 @@ impl CliInputSystem {
         match result {
             Ok(_) => (),
             Err(err) => {
-                log::error!(err:%; "Cli input system.");
+                tracing::error!("CLI input system err: {err}");
             }
         }
     }
@@ -98,11 +98,11 @@ impl CliInputSystem {
         match result {
             Some(result) => result
                 .inspect_err(|err| {
-                    log::warn!(err:?; "Cli input system parser.");
+                    tracing::warn!("CLI input system parser err: {err:?}");
                 })
                 .ok(),
             None => {
-                log::warn!("Unknown command");
+                tracing::warn!("Unknown command");
                 None
             }
         }
@@ -338,7 +338,7 @@ mod misc {
         std::io::stdin()
             .read_line(&mut buf)
             .inspect_err(|err| {
-                log::warn!(err:%; "Cli input system");
+                tracing::warn!("CLI input system err: {err}");
             })
             .map(|_| {
                 trim_newline(&mut buf);

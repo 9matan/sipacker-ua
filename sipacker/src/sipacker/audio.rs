@@ -101,7 +101,7 @@ impl AudioOutDevice {
         let config = cpal::StreamConfig::from(self.config.clone());
         let channels = config.channels as usize;
         let sample_rate = config.sample_rate.0 as usize;
-        let err_fn = |err| log::error!(err:%; "an error occurred on output stream");
+        let err_fn = |err| tracing::error!("an error occurred on output stream {err}");
 
         let stream = self.device.build_output_stream(
             &config,
@@ -190,7 +190,7 @@ impl AudioInDevice {
         let config = cpal::StreamConfig::from(self.config.clone());
         let channels = config.channels as usize;
         let sample_rate = config.sample_rate.0 as usize;
-        let err_fn = |err| log::error!(err:%; "an error occurred on input stream");
+        let err_fn = |err| tracing::error!("an error occurred on input stream {err}");
 
         let stream = self.device.build_input_stream(
             &config,

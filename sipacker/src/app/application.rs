@@ -9,13 +9,14 @@ use anyhow::Result;
 use ezk_sip_auth::DigestCredentials;
 use tokio::select;
 use tokio::sync::mpsc;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 pub fn run_app(args: Args) -> Result<()> {
-    env_logger::init();
-    log::info!("Initializing the application");
+    init_logger();
+    tracing::info!("Initializing the application");
 
     let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(4)
+        .worker_threads(args.jobs)
         .enable_io()
         .enable_time()
         .build()?;
@@ -24,13 +25,21 @@ pub fn run_app(args: Args) -> Result<()> {
     Ok(())
 }
 
+fn init_logger() {
+    let envfilter = EnvFilter::from_env("RUST_LOG");
+    tracing_subscriber::registry()
+        .with(envfilter)
+        .with(fmt::Layer::default())
+        .init();
+}
+
 async fn run_app_inner(args: Args) -> Result<()> {
     let ua_ip: Ipv4Addr = args.ip_addr;
     let ua_port = args.port;
 
     let command_receiver = cli_input::run_input_system();
 
-    log::info!("Running the application");
+    tracing::info!("Running the application");
     let mut app = App::build((ua_ip, ua_port).into()).await?;
     app.run(command_receiver).await
 }
@@ -67,11 +76,11 @@ impl App {
     }
 
     async fn execute_command(&mut self, command: Command) {
-        log::info!(command:%; "Executing the command.");
+        tracing::info!("Executing the command: {}", command);
         let _ = command
             .execute(self)
             .await
-            .inspect_err(|err| log::warn!(err:%; "Command execution."));
+            .inspect_err(|err| tracing::warn!("Command execution err: {err}"));
     }
 
     async fn update_user_agent(&mut self) {
@@ -83,13 +92,13 @@ impl App {
                 }
             }
             Err(err) => {
-                log::error!(err:%; "User agent updating.");
+                tracing::error!("User agent updating err: {err}");
             }
         }
     }
 
     fn handle_ua_event(&mut self, event: UserAgentEvent) {
-        log::debug!(event:?; "Handling UA event.");
+        tracing::info!("Handling UA event: {:?}", event);
         match event {
             UserAgentEvent::CallTerminated => {
                 self.audio_system.destroy_input_stream();
@@ -105,7 +114,7 @@ impl App {
         credentials: DigestCredentials,
         registrar_socket: SocketAddr,
     ) -> Result<()> {
-        log::info!(user_name:%; "Registering the UA.");
+        tracing::info!("Registering the UA: {user_name}");
         self.user_agent
             .register(user_name, credentials, registrar_socket)
             .await
@@ -121,7 +130,7 @@ impl App {
                 "Can't make a call. There is an active call already",
             ))
         } else {
-            log::info!(target_user_name:%; "Making a call.");
+            tracing::info!("Making a call to {target_user_name}");
             let audio_sender = self.audio_system.create_output_stream()?;
             let audio_receiver = self.audio_system.create_input_stream()?;
             self.user_agent
@@ -136,7 +145,7 @@ impl App {
                 "Can't terminate a call. There is no active call",
             ))
         } else {
-            log::info!("Terminating the call.");
+            tracing::info!("Terminating the call.");
             self.user_agent.terminate_call().await
         }
     }

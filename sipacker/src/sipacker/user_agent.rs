@@ -33,7 +33,7 @@ struct RegData {
     pub registration: Registration,
     pub credentials: DigestCredentials,
     pub registrar_socket: SocketAddr,
-    pub user_name: String,
+    pub _user_name: String,
 }
 
 impl UserAgent {
@@ -86,7 +86,7 @@ impl UserAgent {
             registration,
             credentials,
             registrar_socket,
-            user_name: user_name,
+            _user_name: user_name,
         };
         self.reg_data = Some(reg_data);
 
@@ -170,7 +170,7 @@ impl UserAgent {
     async fn update_call(&mut self) {
         if let Some(call) = self.out_call.as_mut() {
             let event = call.run().await.inspect_err(|err| {
-                log::warn!(err:%; "Outbound call.");
+                tracing::warn!("Outbound call err: {err}");
             });
 
             let is_err = event.is_err();

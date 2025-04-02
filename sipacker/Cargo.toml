@@ -5,43 +5,26 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.97"
-async-channel = "2.3.1"
-async-trait = "0.1.86"
 bytes = "1.10.0"
-bytesstr = "1.0.2"
 clap = { version = "4.5.35", features = ["derive", "env"] }
 cpal = "0.15.3"
 dasp_sample = "0.11.0"
-rand = "0.9.0"
 rubato = "0.16.1"
 tokio = "1.43.0"
 tokio-util = "0.7.14"
-typed-builder = "0.20.0"
-simple-error = "0.3.1"
 
-env_logger = { version="0.11.6", features = ["unstable-kv"] }
-log = { version="0.4.26", features = ["kv"] }
+tracing = { version = "0.1.41" }
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
 
-# ezk-internal = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
-# ezk-rtc = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
-# ezk-rtc-proto = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
-# ezk-rtp = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
-# ezk-sdp-types = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
-# ezk-sip = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
-# ezk-sip-auth = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
-# ezk-sip-core = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
-# ezk-sip-types = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
-# ezk-sip-ua = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
-
-ezk-internal.workspace = true
-ezk-rtc.workspace = true
-ezk-rtc-proto.workspace = true
-ezk-rtp.workspace = true
-ezk-sdp-types.workspace = true
-ezk-sip.workspace = true
-ezk-sip-auth.workspace = true
-ezk-sip-core.workspace = true
-ezk-sip-types.workspace = true
-ezk-sip-ua.workspace = true
+ezk-internal = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-rtc = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-rtc-proto = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-rtp = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-sdp-types = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-sip = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-sip-auth = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-sip-core = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-sip-types = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-sip-ua = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
 
 ezk-g711 = { git = "https://github.com/kbalt/ezk-media.git", rev = "122d4a7ef1847a2919d9840ac83abc3ad7495aca" }
