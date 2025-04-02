@@ -25,6 +25,6 @@ The app has been tested with:
 ## Next steps
 - Implement handling of an incoming call (WIP).
 - Implement multi-codecs support:
-  - G.711 mulaw
+  - G.711 ulaw
   - G.722
 - Add the terminal UI
