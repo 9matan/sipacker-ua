@@ -99,12 +99,9 @@ impl App {
 
     fn handle_ua_event(&mut self, event: UserAgentEvent) {
         tracing::info!("Handling UA event: {:?}", event);
-        match event {
-            UserAgentEvent::CallTerminated => {
-                self.audio_system.destroy_input_stream();
-                self.audio_system.destroy_output_stream();
-            }
-            _ => (),
+        if event == UserAgentEvent::CallTerminated {
+            self.audio_system.destroy_input_stream();
+            self.audio_system.destroy_output_stream();
         }
     }
 

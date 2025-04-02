@@ -81,12 +81,9 @@ impl CliInputSystem {
         let result = self.parsers.iter().find_map(|parser| {
             let result = parser.parse(line);
             if result.is_ok()
-                || result.as_ref().is_err_and(|err| {
-                    if let CommandParserError::Arguments(_) = err {
-                        true
-                    } else {
-                        false
-                    }
+                || result.as_ref().is_err_and(|err| match err {
+                    CommandParserError::Arguments(_) => true,
+                    _ => false,
                 })
             {
                 Some(result)

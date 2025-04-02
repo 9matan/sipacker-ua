@@ -122,13 +122,9 @@ impl OutboundCall {
         let mut audio_receiver = self.audio_receiver.take().unwrap();
         let mut rtp_factory = rtp::RtpFactory::new(codec.pt);
         let sender_task = tokio::spawn(async move {
-            loop {
-                if let Some(payload) = audio_receiver.recv().await {
-                    let packet = rtp_factory.create_rtp_packet(payload);
-                    if let Err(_) = sender.send(packet).await {
-                        break;
-                    }
-                } else {
+            while let Some(payload) = audio_receiver.recv().await {
+                let packet = rtp_factory.create_rtp_packet(payload);
+                if sender.send(packet).await.is_err() {
                     break;
                 }
             }
@@ -139,12 +135,8 @@ impl OutboundCall {
     fn run_receiver_task(&mut self, mut receiver: RtpReceiver, _codec: Codec) {
         let audio_sender = self.audio_sender.take().unwrap();
         let receiver_task = tokio::spawn(async move {
-            loop {
-                if let Some(packet) = receiver.recv().await {
-                    let _ = audio_sender.try_send(packet.payload);
-                } else {
-                    break;
-                }
+            while let Some(packet) = receiver.recv().await {
+                let _ = audio_sender.try_send(packet.payload);
             }
         });
         self.receiver_task = Some(receiver_task);
@@ -176,7 +168,7 @@ mod rtp {
                 pt: self.rtp_pt,
                 sequence_number: self.rtp_sequence_number,
                 timestamp: self.rtp_timestamp,
-                payload: payload,
+                payload,
                 ssrc: Ssrc(0),
                 extensions: RtpExtensions::default(),
             };

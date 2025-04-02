@@ -69,7 +69,7 @@ impl UserAgent {
         credentials: DigestCredentials,
         registrar_socket: SocketAddr,
     ) -> Result<()> {
-        let registrar = misc::make_sip_uri(&user_name, &registrar_socket)?;
+        let registrar = misc::make_sip_uri(user_name, &registrar_socket)?;
         let user_name = user_name.to_owned();
         let config = RegistrarConfig {
             registrar,
@@ -112,7 +112,7 @@ impl UserAgent {
             .as_ref()
             .ok_or(anyhow::Error::msg("The user agent is not registered"))?;
 
-        let target = misc::make_sip_uri(&target_user_name, &reg_data.registrar_socket)?;
+        let target = misc::make_sip_uri(target_user_name, &reg_data.registrar_socket)?;
         let authenticator = reg_data.create_authenticator();
         let media = self.create_media()?;
         let outbound_call = reg_data
