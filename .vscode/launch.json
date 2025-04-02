@@ -12,6 +12,7 @@
             "preLaunchTask": "rust: cargo build",
             "cwd": "${workspaceRoot}",
             "console": "integratedTerminal",
+            "args": ["--ip-addr", "0.0.0.0", "--port", "5060"],
             "env": {
                 "RUST_LOG": "debug,neli=error",
                 "RUST_BACKTRACE": "full",

@@ -10,7 +10,7 @@ use ezk_sip_auth::DigestCredentials;
 use tokio::select;
 use tokio::sync::mpsc;
 
-pub fn run_app(_args: Args) -> Result<()> {
+pub fn run_app(args: Args) -> Result<()> {
     env_logger::init();
     log::info!("Initializing the application");
 
@@ -19,16 +19,16 @@ pub fn run_app(_args: Args) -> Result<()> {
         .enable_io()
         .enable_time()
         .build()?;
-    rt.block_on(run_app_inner())?;
+    rt.block_on(run_app_inner(args))?;
 
     Ok(())
 }
 
-async fn run_app_inner() -> Result<()> {
-    let command_receiver = cli_input::run_input_system();
+async fn run_app_inner(args: Args) -> Result<()> {
+    let ua_ip: Ipv4Addr = args.ip_addr;
+    let ua_port = args.port;
 
-    let ua_ip: Ipv4Addr = "192.168.0.117".parse().unwrap();
-    let ua_port = 5060;
+    let command_receiver = cli_input::run_input_system();
 
     log::info!("Running the application");
     let mut app = App::build((ua_ip, ua_port).into()).await?;
