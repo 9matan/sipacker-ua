@@ -1,4 +1,5 @@
 use crate::app::{args::Args, cli_input, commands::Command};
+use crate::sipacker::user_agent::UserAgentEvent;
 use crate::sipacker::{audio::AudioSystem, user_agent::UserAgent};
 
 use std::net::{Ipv4Addr, SocketAddr};
@@ -58,7 +59,7 @@ impl App {
                 command = command_receiver.recv() => if let Some(command) = command {
                     self.execute_command(command).await
                 },
-                _ua_event = self.user_agent.run() => (),
+                _ = self.update_user_agent() => (),
             }
 
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -71,6 +72,30 @@ impl App {
             .execute(self)
             .await
             .inspect_err(|err| log::warn!(err:%; "Command execution."));
+    }
+
+    async fn update_user_agent(&mut self) {
+        let result = self.user_agent.run().await;
+        match result {
+            Ok(event) => {
+                if let Some(event) = event {
+                    self.handle_ua_event(event);
+                }
+            }
+            Err(err) => {
+                log::error!(err:%; "User agent updating.");
+            }
+        }
+    }
+
+    fn handle_ua_event(&mut self, event: UserAgentEvent) {
+        log::debug!(event:?; "Handling ua event.");
+        match event {
+            UserAgentEvent::CallTerminated => {
+                self.audio_system.destroy_input_stream();
+                self.audio_system.destroy_output_stream();
+            }
+        }
     }
 
     pub(crate) async fn register_ua(
@@ -90,6 +115,10 @@ impl App {
             Err(anyhow::Error::msg(
                 "Can't make a call. The UA is not registered",
             ))
+        } else if self.user_agent.has_active_call() {
+            Err(anyhow::Error::msg(
+                "Can't make a call. There is an active call already",
+            ))
         } else {
             log::info!(target_user_name:%; "Making a call.");
             let audio_sender = self.audio_system.create_output_stream()?;
@@ -97,6 +126,19 @@ impl App {
             self.user_agent
                 .make_call(target_user_name, audio_sender, audio_receiver)
                 .await
+        }
+    }
+
+    pub(crate) async fn terminate_call(&mut self) -> Result<()> {
+        if !self.user_agent.has_active_call() {
+            Err(anyhow::Error::msg(
+                "Can't terminate a call. There is no active call",
+            ))
+        } else {
+            log::info!("Terminating the call.");
+            self.audio_system.destroy_input_stream();
+            self.audio_system.destroy_output_stream();
+            self.user_agent.terminate_call().await
         }
     }
 }

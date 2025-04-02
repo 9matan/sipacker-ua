@@ -1,4 +1,7 @@
-use std::net::{IpAddr, SocketAddr};
+use std::{
+    net::{IpAddr, SocketAddr},
+    time::Duration,
+};
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -7,6 +10,14 @@ use ezk_rtc_proto::{BundlePolicy, Options, RtcpMuxPolicy, TransportType};
 use ezk_sip::{Client, MediaSession, RegistrarConfig, Registration};
 use ezk_sip_auth::{DigestAuthenticator, DigestCredentials};
 use tokio::sync::mpsc;
+
+#[derive(Debug)]
+pub enum UserAgentEvent {
+    CallTerminated,
+    // RegistrationSuccessful,
+    // RegistrationFailed,
+    // Unregistered,
+}
 
 pub struct UserAgent {
     sip_client: Client,
@@ -40,6 +51,10 @@ impl UserAgent {
 
     pub fn is_registered(&self) -> bool {
         self.reg_data.is_some()
+    }
+
+    pub fn has_active_call(&self) -> bool {
+        self.out_call.is_some()
     }
 
     pub async fn register(
@@ -91,21 +106,35 @@ impl UserAgent {
             .registration
             .make_call(target, authenticator, media)
             .await?;
-        let out_call = out_call::OutCall::new(out_call, audio_sender, audio_receiver);
+        let waiting_timeout = Duration::from_secs(10);
+        let out_call =
+            out_call::OutCall::new(out_call, audio_sender, audio_receiver, waiting_timeout);
         self.out_call = Some(out_call);
 
         Ok(())
     }
 
-    pub async fn run(&mut self) -> Result<()> {
+    pub async fn terminate_call(&mut self) -> Result<()> {
+        if let Some(mut call) = self.out_call.take() {
+            call.cancel().await;
+        }
+        Ok(())
+    }
+
+    pub async fn run(&mut self) -> Result<Option<UserAgentEvent>> {
         if let Some(call) = self.out_call.as_mut() {
-            let is_finished = call.run().await?;
-            if is_finished {
+            let is_finished = call.run().await.inspect_err(|err| {
+                log::warn!(err:%; "Outbound call.");
+            });
+
+            if is_finished.is_err() || is_finished.is_ok_and(|b| b) {
                 self.out_call.take();
+                Ok(Some(UserAgentEvent::CallTerminated))
+            } else {
+                Ok(None)
             }
-            Ok(())
         } else {
-            Ok(())
+            Ok(None)
         }
     }
 
@@ -126,7 +155,7 @@ impl UserAgent {
                 1,
                 ezk_rtc_proto::Direction::SendRecv,
             )
-            .ok_or(anyhow::Error::msg("Could not create Audio media"))?;
+            .ok_or(anyhow::Error::msg("Could not create audio media"))?;
         sdp_session.add_media(audio_media_id, ezk_rtc_proto::Direction::SendRecv);
 
         Ok(MediaSession::new(sdp_session))
@@ -201,14 +230,15 @@ mod out_call {
 
     use anyhow::Result;
     use bytes::Bytes;
-    use ezk_rtp::RtpPacket;
     use ezk_sip::{Call, CallEvent, Codec, MediaSession, RtpReceiver, RtpSender};
-    use tokio::{sync::mpsc, task::JoinHandle};
+    use tokio::{select, sync::mpsc, task::JoinHandle};
+    use tokio_util::sync::CancellationToken;
 
     pub struct OutCall {
         audio_sender: Option<mpsc::Sender<Bytes>>,
         audio_receiver: Option<mpsc::Receiver<Bytes>>,
         calling_task: Option<JoinHandle<Result<Call<MediaSession>>>>,
+        cancellation: CancellationToken,
         call: Option<Call<MediaSession>>,
         sender_task: Option<JoinHandle<()>>,
         receiver_task: Option<JoinHandle<()>>,
@@ -219,8 +249,14 @@ mod out_call {
             out_call: ezk_sip::OutboundCall<MediaSession>,
             audio_sender: mpsc::Sender<Bytes>,
             audio_receiver: mpsc::Receiver<Bytes>,
+            waiting_timeout: Duration,
         ) -> Self {
-            let calling_task = tokio::spawn(Self::run_calling_task(out_call));
+            let cancellation = CancellationToken::new();
+            let calling_task = tokio::spawn(Self::run_calling_task(
+                out_call,
+                cancellation.clone(),
+                waiting_timeout,
+            ));
             let calling_task = Some(calling_task);
             let audio_sender = Some(audio_sender);
             let audio_receiver = Some(audio_receiver);
@@ -228,6 +264,7 @@ mod out_call {
                 audio_sender,
                 audio_receiver,
                 calling_task,
+                cancellation,
                 call: None,
                 sender_task: None,
                 receiver_task: None,
@@ -236,27 +273,31 @@ mod out_call {
 
         async fn run_calling_task(
             mut out_call: ezk_sip::OutboundCall<MediaSession>,
+            cancellation: CancellationToken,
+            waiting_duration: Duration,
         ) -> Result<Call<MediaSession>> {
-            let completed_call =
-                match tokio::time::timeout(Duration::from_secs(10), out_call.wait_for_completion())
-                    .await
-                {
-                    Ok(completed) => completed.map_err(|err| anyhow::Error::msg(err.to_string())),
-                    Err(_) => {
-                        out_call.cancel().await?;
-                        Err(anyhow::Error::msg("Outbound call is timed out"))
-                    }
-                }?;
+            let completed_call = select! {
+                _ = cancellation.cancelled() => Err(anyhow::Error::msg("Outbound call is cancelled")),
+                _ = tokio::time::sleep(waiting_duration) => Err(anyhow::Error::msg("Outbound call is timed out")),
+                completed = out_call.wait_for_completion() => {
+                    completed.map_err(|err| anyhow::Error::msg(err.to_string()))
+                }
+            };
 
-            completed_call
-                .finish()
-                .await
-                .map_err(|err| anyhow::Error::msg(err.to_string()))
+            if completed_call.is_err() {
+                out_call.cancel().await?;
+            }
+            let completed_call = completed_call?;
+
+            select! {
+                _ = cancellation.cancelled() => Err(anyhow::Error::msg("Outbound call is cancelled")),
+                call = completed_call.finish() => call.map_err(|err| anyhow::Error::msg(err.to_string())),
+            }
         }
 
         pub async fn cancel(&mut self) {
             if let Some(calling_task) = self.calling_task.take() {
-                calling_task.abort();
+                self.cancellation.cancel();
                 let _ = calling_task.await;
             }
 
@@ -268,6 +309,10 @@ mod out_call {
             if let Some(receiver_task) = self.receiver_task.take() {
                 receiver_task.abort();
                 let _ = receiver_task.await;
+            }
+
+            if let Some(call) = self.call.take() {
+                let _ = call.terminate().await;
             }
         }
 

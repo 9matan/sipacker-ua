@@ -7,6 +7,7 @@ use anyhow::Result;
 pub enum Command {
     Register(commands::Register),
     MakeCall(commands::MakeCall),
+    TerminateCall(commands::TerminateCall),
 }
 
 impl Command {
@@ -14,6 +15,7 @@ impl Command {
         match self {
             Command::Register(cmd) => cmd.execute(app).await,
             Command::MakeCall(cmd) => cmd.execute(app).await,
+            Command::TerminateCall(cmd) => cmd.execute(app).await,
         }
     }
 }
@@ -23,6 +25,7 @@ impl Display for Command {
         match self {
             Command::Register(cmd) => cmd.fmt(f),
             Command::MakeCall(cmd) => cmd.fmt(f),
+            Command::TerminateCall(cmd) => cmd.fmt(f),
         }
     }
 }
@@ -101,6 +104,31 @@ pub(crate) mod commands {
     impl Display for MakeCall {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(f, "make call {{user:{}}}", self.target_user_name)
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct TerminateCall;
+
+    impl TerminateCall {
+        pub fn new() -> Self {
+            Self {}
+        }
+
+        pub async fn execute(self, app: &mut App) -> Result<()> {
+            app.terminate_call().await
+        }
+    }
+
+    impl From<TerminateCall> for Command {
+        fn from(value: TerminateCall) -> Self {
+            Command::TerminateCall(value)
+        }
+    }
+
+    impl Display for TerminateCall {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "terminate call")
         }
     }
 }

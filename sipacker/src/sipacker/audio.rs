@@ -37,10 +37,18 @@ impl AudioSystem {
         Ok(tx)
     }
 
+    pub fn destroy_output_stream(&mut self) {
+        self.out_device.destroy_stream();
+    }
+
     pub fn create_input_stream(&mut self) -> Result<mpsc::Receiver<bytes::Bytes>, anyhow::Error> {
         let (tx, rx) = mpsc::channel(100);
         self.in_device.create_stream(tx)?;
         Ok(rx)
+    }
+
+    pub fn destroy_input_stream(&mut self) {
+        self.in_device.destroy_stream();
     }
 }
 
@@ -55,6 +63,10 @@ impl AudioOutDevice {
             config,
             stream: None,
         })
+    }
+
+    fn destroy_stream(&mut self) {
+        self.stream.take();
     }
 
     fn create_stream(
@@ -79,7 +91,7 @@ impl AudioOutDevice {
         Ok(())
     }
 
-    pub fn run_stream<T>(
+    fn run_stream<T>(
         &mut self,
         mut receiver: mpsc::Receiver<bytes::Bytes>,
     ) -> Result<cpal::Stream, anyhow::Error>
@@ -145,6 +157,10 @@ impl AudioInDevice {
         })
     }
 
+    fn destroy_stream(&mut self) {
+        self.stream.take();
+    }
+
     fn create_stream(&mut self, sender: mpsc::Sender<bytes::Bytes>) -> Result<(), anyhow::Error> {
         let sample_format = self.config.sample_format();
         let stream = match sample_format {
@@ -164,7 +180,7 @@ impl AudioInDevice {
         Ok(())
     }
 
-    pub fn run_stream<T>(
+    fn run_stream<T>(
         &mut self,
         mut sender: mpsc::Sender<bytes::Bytes>,
     ) -> Result<cpal::Stream, anyhow::Error>

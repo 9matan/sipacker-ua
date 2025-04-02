@@ -28,6 +28,7 @@ impl CliInputSystem {
         let parsers = vec![
             parsers::Register::new().into(),
             parsers::MakeCall::new().into(),
+            parsers::TerminateCall::new().into(),
         ];
         Self {
             command_sender,
@@ -75,6 +76,7 @@ impl CliInputSystem {
     }
 
     fn parse_command(&self, line: &str) -> Option<Command> {
+        // skip CommandParserError::Command error, try to find a parser for a command with a specified name
         let result = self.parsers.iter().find_map(|parser| {
             let result = parser.parse(line);
             if result.is_ok()
@@ -115,20 +117,23 @@ enum CommandParserError {
 enum CommandParser {
     Register(parsers::Register),
     MakeCall(parsers::MakeCall),
+    TerminateCall(parsers::TerminateCall),
 }
 
 impl CommandParser {
-    pub fn parse(&self, line: &str) -> Result<Command, CommandParserError> {
+    fn parse(&self, line: &str) -> Result<Command, CommandParserError> {
         match self {
             CommandParser::Register(parser) => parser.parse(line),
             CommandParser::MakeCall(parser) => parser.parse(line),
+            CommandParser::TerminateCall(parser) => parser.parse(line),
         }
     }
 
-    pub fn get_help(&self) -> &str {
+    fn get_help(&self) -> &str {
         match self {
             CommandParser::Register(parser) => parser.get_help(),
             CommandParser::MakeCall(parser) => parser.get_help(),
+            CommandParser::TerminateCall(parser) => parser.get_help(),
         }
     }
 }
@@ -147,12 +152,12 @@ mod parsers {
     }
 
     impl Parser {
-        pub fn new<I: IntoIterator<Item = String>>(fields: I) -> Self {
+        fn new<I: IntoIterator<Item = String>>(fields: I) -> Self {
             let fields = fields.into_iter().collect();
             Self { fields }
         }
 
-        pub fn parse(&self, line: &str) -> Result<HashMap<String, String>> {
+        fn parse(&self, line: &str) -> Result<HashMap<String, String>> {
             let tokens = line.split(' ');
             let mut data = HashMap::new();
 
@@ -267,6 +272,32 @@ mod parsers {
     impl From<MakeCall> for CommandParser {
         fn from(value: MakeCall) -> Self {
             CommandParser::MakeCall(value)
+        }
+    }
+
+    pub struct TerminateCall;
+
+    impl TerminateCall {
+        pub fn new() -> Self {
+            Self {}
+        }
+
+        pub fn parse(&self, line: &str) -> Result<Command, CommandParserError> {
+            if !line.starts_with("terminate call") {
+                Err(CommandParserError::Command)
+            } else {
+                Ok(commands::TerminateCall::new().into())
+            }
+        }
+
+        pub fn get_help(&self) -> &str {
+            "terminate call"
+        }
+    }
+
+    impl From<TerminateCall> for CommandParser {
+        fn from(value: TerminateCall) -> Self {
+            CommandParser::TerminateCall(value)
         }
     }
 }
