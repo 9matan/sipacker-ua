@@ -1,6 +1,8 @@
 # Sipacker-UA
 Rust CLI SIP User Agent. The agent is based on [ezk project](https://github.com/kbalt/ezk). Thank developers a lot!
 
+This is the capstone project for [Ukrainian Rustcamp](https://github.com/rust-lang-ua/rustcamp/tree/master).
+
 The app has been tested with:
 - SIP server: FreePBX 16.0.33
 - Softphones: "MizuDroid" and "MicroSIP"
@@ -28,3 +30,13 @@ The app has been tested with:
   - G.711 ulaw
   - G.722
 - Add the terminal UI
+
+## Architecture
+The project comprises the app's stuff (app folder) and user agent (sipacker).
+### sipacker
+- **AudioSystem** handles input and output streams (resampling, encoding/decoding). Data exchange is done with channels.
+- **OutboundCall** establishes an outbound call and starts data exchange with audio channels.
+- **UserAgent** represents a set of functionalities (registration, calling).
+### app
+- **CliInputSystem** handles stdin and sends commands to the application.
+- **App** orchestrates everything (audio, commands, user agent).
