@@ -1,9 +1,8 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use ezk_rtp::RtpPacket;
 use tokio::sync::mpsc;
 
 pub struct AudioSystem {
-    host: cpal::Host,
+    _host: cpal::Host,
     out_device: AudioOutDevice,
     in_device: AudioInDevice,
 }
@@ -26,7 +25,7 @@ impl AudioSystem {
         let out_device = AudioOutDevice::build(&host)?;
         let in_device = AudioInDevice::build(&host)?;
         Ok(Self {
-            host,
+            _host: host,
             out_device,
             in_device,
         })

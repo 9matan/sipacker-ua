@@ -1,3 +1,5 @@
 pub mod application;
 pub mod args;
-pub mod settings;
+pub(crate) mod cli_input;
+pub(crate) mod commands;
+pub(crate) mod settings;

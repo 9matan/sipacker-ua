@@ -38,11 +38,15 @@ impl UserAgent {
         })
     }
 
+    pub fn is_registered(&self) -> bool {
+        self.reg_data.is_some()
+    }
+
     pub async fn register(
         &mut self,
         user_name: &str,
-        registrar_socket: SocketAddr,
         credentials: DigestCredentials,
+        registrar_socket: SocketAddr,
     ) -> Result<()> {
         let registrar = misc::make_sip_uri(&user_name, &registrar_socket)?;
         let user_name = user_name.to_owned();
