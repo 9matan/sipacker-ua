@@ -5,7 +5,7 @@ This is the capstone project for [Ukrainian Rustcamp](https://github.com/rust-la
 
 The app has been tested with:
 - SIP server: FreePBX 16.0.33
-- Softphones: "MizuDroid" and "MicroSIP"
+- Softphones: "MizuDroid" (Android) and "MicroSIP" (Windows)
 - Target OS: Ubuntu 24.04
 
 ## Prerequisites (Ubuntu 24.04)
