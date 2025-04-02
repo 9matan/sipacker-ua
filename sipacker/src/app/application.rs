@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 
 pub fn run_app(_args: Args) -> Result<()> {
     env_logger::init();
+    log::info!("Initializing the application");
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
@@ -23,12 +24,12 @@ pub fn run_app(_args: Args) -> Result<()> {
 }
 
 async fn run_app_inner() -> Result<()> {
-    let (command_sender, command_receiver) = mpsc::channel(20);
-    cli_input::run_input_system(command_sender)?;
+    let command_receiver = cli_input::run_input_system();
 
     let ua_ip: Ipv4Addr = "192.168.0.117".parse().unwrap();
     let ua_port = 5060;
 
+    log::info!("Running the application");
     let mut app = App::build((ua_ip, ua_port).into()).await?;
     app.run(command_receiver).await
 }
@@ -55,16 +56,21 @@ impl App {
         loop {
             select! {
                 command = command_receiver.recv() => if let Some(command) = command {
-                    command.execute(self).await?
+                    self.execute_command(command).await
                 },
                 _ua_event = self.user_agent.run() => (),
             }
 
-            //let _ = tokio::time::timeout(Duration::from_millis(100), ).await;
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+    }
 
-        Ok(())
+    async fn execute_command(&mut self, command: Command) {
+        log::info!(command:%; "Executing the command.");
+        let _ = command
+            .execute(self)
+            .await
+            .inspect_err(|err| log::warn!(err:%; "Command execution."));
     }
 
     pub(crate) async fn register_ua(
@@ -73,6 +79,7 @@ impl App {
         credentials: DigestCredentials,
         registrar_socket: SocketAddr,
     ) -> Result<()> {
+        log::info!(user_name:%; "Registering the UA.");
         self.user_agent
             .register(user_name, credentials, registrar_socket)
             .await
@@ -84,6 +91,7 @@ impl App {
                 "Can't make a call. The UA is not registered",
             ))
         } else {
+            log::info!(target_user_name:%; "Making a call.");
             let audio_sender = self.audio_system.create_output_stream()?;
             let audio_receiver = self.audio_system.create_input_stream()?;
             self.user_agent

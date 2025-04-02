@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::app::application::App;
 
 use anyhow::Result;
@@ -16,11 +18,20 @@ impl Command {
     }
 }
 
+impl Display for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Command::Register(cmd) => cmd.fmt(f),
+            Command::MakeCall(cmd) => cmd.fmt(f),
+        }
+    }
+}
+
 pub(crate) mod commands {
     use super::Command;
     use crate::app::application::App;
 
-    use std::net::SocketAddr;
+    use std::{fmt::Display, net::SocketAddr};
 
     use anyhow::Result;
     use ezk_sip_auth::{DigestCredentials, DigestUser};
@@ -54,6 +65,17 @@ pub(crate) mod commands {
         }
     }
 
+    impl Display for Register {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "register {{user:{}; registrar:{}}}",
+                self.user_name, self.registrar
+            )
+        }
+    }
+
+    #[derive(Debug)]
     pub struct MakeCall {
         target_user_name: String,
     }
@@ -73,6 +95,12 @@ pub(crate) mod commands {
     impl From<MakeCall> for Command {
         fn from(value: MakeCall) -> Self {
             Command::MakeCall(value)
+        }
+    }
+
+    impl Display for MakeCall {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "make call {{user:{}}}", self.target_user_name)
         }
     }
 }
