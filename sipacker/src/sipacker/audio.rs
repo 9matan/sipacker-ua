@@ -5,6 +5,7 @@ pub struct AudioSystem {
     _host: cpal::Host,
     out_device: AudioOutDevice,
     in_device: AudioInDevice,
+    stream_ch_buffer_size: usize,
 }
 
 struct AudioOutDevice {
@@ -28,11 +29,12 @@ impl AudioSystem {
             _host: host,
             out_device,
             in_device,
+            stream_ch_buffer_size: 200,
         })
     }
 
     pub fn create_output_stream(&mut self) -> Result<mpsc::Sender<bytes::Bytes>, anyhow::Error> {
-        let (tx, rx) = mpsc::channel(100);
+        let (tx, rx) = mpsc::channel(self.stream_ch_buffer_size);
         self.out_device.create_stream(rx)?;
         tracing::info!("Output stream is created");
         Ok(tx)
@@ -44,7 +46,7 @@ impl AudioSystem {
     }
 
     pub fn create_input_stream(&mut self) -> Result<mpsc::Receiver<bytes::Bytes>, anyhow::Error> {
-        let (tx, rx) = mpsc::channel(100);
+        let (tx, rx) = mpsc::channel(self.stream_ch_buffer_size);
         self.in_device.create_stream(tx)?;
         tracing::info!("Input stream is created");
         Ok(rx)
@@ -216,6 +218,7 @@ impl AudioInDevice {
     ) where
         T: cpal::Sample + dasp_sample::conv::ToSample<f32>,
     {
+        // read the first channel only
         let data = input
             .iter()
             .step_by(channels)
