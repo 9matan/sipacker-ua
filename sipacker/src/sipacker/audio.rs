@@ -260,7 +260,7 @@ mod direction {
             let mut channel = if let Channel::Output(channel) = channel {
                 channel
             } else {
-                return Err(anyhow::Error::msg("The Input channel is expected"));
+                return Err(anyhow::Error::msg("The Output channel is expected"));
             };
 
             let channels = config.channels as usize;

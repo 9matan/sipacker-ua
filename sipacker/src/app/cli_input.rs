@@ -162,7 +162,7 @@ impl CommandParserTrait for RegisterParser {
                 .parse()
                 .map_err(|err: AddrParseError| CommandParserError::Arguments(err.to_string()))?;
 
-            let command = command::RegisterCommand::new(user_name, credential, registrar);
+            let command = command::Register::new(user_name, credential, registrar);
 
             Ok(command.into())
         }
@@ -186,7 +186,7 @@ impl CommandParserTrait for UnregisterParser {
         if !line.starts_with("unregister") {
             Err(CommandParserError::Command)
         } else {
-            Ok(command::UnregisterCommand::new().into())
+            Ok(command::Unregister::new().into())
         }
     }
 
@@ -220,7 +220,7 @@ impl CommandParserTrait for MakeCallParser {
                 "\"user\" field is missing".to_owned(),
             ))?;
 
-            let command = command::MakeCallCommand::new(target_user_name);
+            let command = command::MakeCall::new(target_user_name);
 
             Ok(command.into())
         }
@@ -244,7 +244,7 @@ impl CommandParserTrait for TerminateCallParser {
         if !line.starts_with("terminate call") {
             Err(CommandParserError::Command)
         } else {
-            Ok(command::TerminateCallCommand::new().into())
+            Ok(command::TerminateCall::new().into())
         }
     }
 
