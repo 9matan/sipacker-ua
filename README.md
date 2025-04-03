@@ -1,8 +1,6 @@
 # Sipacker-UA
 Rust CLI SIP User Agent. The agent is based on [ezk project](https://github.com/kbalt/ezk). Thank developers a lot!
 
-This is the capstone project for [Ukrainian Rustcamp](https://github.com/rust-lang-ua/rustcamp/tree/master).
-
 The app has been tested with:
 - SIP server: FreePBX 16.0.33 (chan_sip driver)
 - Softphones: "MizuDroid" (Android) and "MicroSIP" (Windows)
