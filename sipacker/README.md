@@ -4,7 +4,7 @@ Rust CLI SIP User Agent. The agent is based on [ezk project](https://github.com/
 This is the capstone project for [Ukrainian Rustcamp](https://github.com/rust-lang-ua/rustcamp/tree/master).
 
 The app has been tested with:
-- SIP server: FreePBX 16.0.33
+- SIP server: FreePBX 16.0.33 (chan_sip driver)
 - Softphones: "MizuDroid" (Android) and "MicroSIP" (Windows)
 - Target OS: Ubuntu 24.04
 
@@ -19,17 +19,12 @@ The app has been tested with:
 - Terminating an active call
 - Audio channel supports only PCMA (G.711 alaw) codec.
 
-## Known issues
-- Invitation (calling) does not work if the authentication is required on the SIP proxy (if a password is set on the SIP server).
-- The outbound call in the calling state can't be terminated with the "terminate call" command.
-- The audio channel is noisy
-
-## Next steps
-- Implement handling of an incoming call (WIP).
-- Implement multi-codecs support:
-  - G.711 ulaw
-  - G.722
-- Add the terminal UI
+## Usage
+1. Launch the program with `cargo run -- --ip-addr <agent ip addr>` (run `cargo run -- help` to see the available args)
+1. We need to register the agent on the SIP server, execute the command in the app: `register user=<agent phone number> registrar=<IP addr of SIP>:<port of SIP>` (by default, a port is 5060, but for the chan_sip driver it is 5170)
+1. Make a call to another agent: `call user=<another agent phone number>`
+1. To get the list of available commands in the app, type `help`
+1. Enjoy the noisy call =)
 
 ## Architecture
 The project comprises the app's stuff (app folder) and user agent (sipacker).
@@ -40,3 +35,16 @@ The project comprises the app's stuff (app folder) and user agent (sipacker).
 ### app
 - **CliInputSystem** handles stdin and sends commands to the application.
 - **App** orchestrates everything (audio, commands, user agent).
+- 
+## Known issues
+- Invitation (calling) does not work if the authentication is required on the SIP proxy (if a password is set on the SIP server).
+- The outbound call in the calling state can't be terminated with the "terminate call" command.
+- The audio channel is noisy
+
+## Next steps
+- Implement handling of an incoming call (WIP).
+- Organize logging to files.
+- Implement multi-codecs support:
+  - G.711 ulaw
+  - G.722
+- Add the terminal UI.
