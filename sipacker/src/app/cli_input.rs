@@ -1,8 +1,10 @@
-use std::{thread, time::Duration};
+use std::{net::AddrParseError, thread, time::Duration};
 
-use crate::app::command::Command;
+use crate::app::command::{self, Command};
 
 use anyhow::Result;
+use enum_dispatch::enum_dispatch;
+use ezk_sip_auth::DigestUser;
 use tokio::sync::mpsc;
 
 pub(crate) fn run_input_system() -> mpsc::Receiver<Command> {
@@ -26,10 +28,10 @@ struct CliInputSystem {
 impl CliInputSystem {
     pub fn new(command_sender: mpsc::Sender<Command>) -> Self {
         let parsers = vec![
-            parsers::Register::new().into(),
-            parsers::Unregister::new().into(),
-            parsers::MakeCall::new().into(),
-            parsers::TerminateCall::new().into(),
+            RegisterParser::new().into(),
+            UnregisterParser::new().into(),
+            MakeCallParser::new().into(),
+            TerminateCallParser::new().into(),
         ];
         Self {
             command_sender,
@@ -111,53 +113,162 @@ enum CommandParserError {
     Arguments(String),
 }
 
-enum CommandParser {
-    Register(parsers::Register),
-    Unregister(parsers::Unregister),
-    MakeCall(parsers::MakeCall),
-    TerminateCall(parsers::TerminateCall),
+#[enum_dispatch()]
+trait CommandParserTrait {
+    fn parse(&self, line: &str) -> Result<Command, CommandParserError>;
+    fn get_help(&self) -> &str;
 }
 
-impl CommandParser {
+#[enum_dispatch(CommandParserTrait)]
+enum CommandParser {
+    RegisterParser,
+    UnregisterParser,
+    MakeCallParser,
+    TerminateCallParser,
+}
+
+pub struct RegisterParser {
+    parser: parser::Parser,
+}
+
+impl RegisterParser {
+    pub fn new() -> Self {
+        let parser = parser::Parser::new(["user".into(), "password".into(), "registrar".into()]);
+        Self { parser }
+    }
+}
+
+impl CommandParserTrait for RegisterParser {
     fn parse(&self, line: &str) -> Result<Command, CommandParserError> {
-        match self {
-            CommandParser::Register(parser) => parser.parse(line),
-            CommandParser::Unregister(parser) => parser.parse(line),
-            CommandParser::MakeCall(parser) => parser.parse(line),
-            CommandParser::TerminateCall(parser) => parser.parse(line),
+        if !line.starts_with("register") {
+            Err(CommandParserError::Command)
+        } else {
+            let data = self
+                .parser
+                .parse(line.trim_start_matches("register"))
+                .map_err(|err| CommandParserError::Arguments(err.to_string()))?;
+
+            let user_name = data.get("user").ok_or(CommandParserError::Arguments(
+                "\"user\" field is missing".to_owned(),
+            ))?;
+            let def_password = "".to_owned();
+            let password = data.get("password").unwrap_or(&def_password);
+            let registrar = data.get("registrar").ok_or(CommandParserError::Arguments(
+                "\"registrar\" field is missing".to_owned(),
+            ))?;
+
+            let credential = DigestUser::new(user_name, password.as_bytes());
+            let registrar = registrar
+                .parse()
+                .map_err(|err: AddrParseError| CommandParserError::Arguments(err.to_string()))?;
+
+            let command = command::RegisterCommand::new(user_name, credential, registrar);
+
+            Ok(command.into())
         }
     }
 
     fn get_help(&self) -> &str {
-        match self {
-            CommandParser::Register(parser) => parser.get_help(),
-            CommandParser::Unregister(parser) => parser.get_help(),
-            CommandParser::MakeCall(parser) => parser.get_help(),
-            CommandParser::TerminateCall(parser) => parser.get_help(),
-        }
+        "register user=<extension_number> [password=<password>] registrar=<ip:port>"
     }
 }
 
-mod parsers {
-    use super::{CommandParser, CommandParserError};
-    use crate::app::command::{commands, Command};
+pub struct UnregisterParser;
 
-    use std::{collections::HashMap, net::AddrParseError};
+impl UnregisterParser {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CommandParserTrait for UnregisterParser {
+    fn parse(&self, line: &str) -> Result<Command, CommandParserError> {
+        if !line.starts_with("unregister") {
+            Err(CommandParserError::Command)
+        } else {
+            Ok(command::UnregisterCommand::new().into())
+        }
+    }
+
+    fn get_help(&self) -> &str {
+        "unregister"
+    }
+}
+
+pub struct MakeCallParser {
+    parser: parser::Parser,
+}
+
+impl MakeCallParser {
+    pub fn new() -> Self {
+        let parser = parser::Parser::new(["user".into()]);
+        Self { parser }
+    }
+}
+
+impl CommandParserTrait for MakeCallParser {
+    fn parse(&self, line: &str) -> Result<Command, CommandParserError> {
+        if !line.starts_with("call") {
+            Err(CommandParserError::Command)
+        } else {
+            let data = self
+                .parser
+                .parse(line.trim_start_matches("call"))
+                .map_err(|err| CommandParserError::Arguments(err.to_string()))?;
+
+            let target_user_name = data.get("user").ok_or(CommandParserError::Arguments(
+                "\"user\" field is missing".to_owned(),
+            ))?;
+
+            let command = command::MakeCallCommand::new(target_user_name);
+
+            Ok(command.into())
+        }
+    }
+
+    fn get_help(&self) -> &str {
+        "call user=<extension_number>"
+    }
+}
+
+pub struct TerminateCallParser;
+
+impl TerminateCallParser {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CommandParserTrait for TerminateCallParser {
+    fn parse(&self, line: &str) -> Result<Command, CommandParserError> {
+        if !line.starts_with("terminate call") {
+            Err(CommandParserError::Command)
+        } else {
+            Ok(command::TerminateCallCommand::new().into())
+        }
+    }
+
+    fn get_help(&self) -> &str {
+        "terminate call"
+    }
+}
+
+mod parser {
+    use std::collections::HashMap;
 
     use anyhow::Result;
-    use ezk_sip_auth::DigestUser;
 
-    struct Parser {
+    pub struct Parser {
         fields: Vec<String>,
     }
 
     impl Parser {
-        fn new<I: IntoIterator<Item = String>>(fields: I) -> Self {
+        pub fn new<I: IntoIterator<Item = String>>(fields: I) -> Self {
             let fields = fields.into_iter().collect();
             Self { fields }
         }
 
-        fn parse(&self, line: &str) -> Result<HashMap<String, String>> {
+        pub fn parse(&self, line: &str) -> Result<HashMap<String, String>> {
             let tokens = line.split(' ');
             let mut data = HashMap::new();
 
@@ -182,148 +293,6 @@ mod parsers {
                 .next()
                 .ok_or(anyhow::Error::msg("Field value is missing"))?;
             Ok((name, value))
-        }
-    }
-
-    pub struct Register {
-        parser: Parser,
-    }
-
-    impl Register {
-        pub fn new() -> Self {
-            let parser = Parser::new(["user".into(), "password".into(), "registrar".into()]);
-            Self { parser }
-        }
-
-        pub fn parse(&self, line: &str) -> Result<Command, CommandParserError> {
-            if !line.starts_with("register") {
-                Err(CommandParserError::Command)
-            } else {
-                let data = self
-                    .parser
-                    .parse(line.trim_start_matches("register"))
-                    .map_err(|err| CommandParserError::Arguments(err.to_string()))?;
-
-                let user_name = data.get("user").ok_or(CommandParserError::Arguments(
-                    "\"user\" field is missing".to_owned(),
-                ))?;
-                let def_password = "".to_owned();
-                let password = data.get("password").unwrap_or(&def_password);
-                let registrar = data.get("registrar").ok_or(CommandParserError::Arguments(
-                    "\"registrar\" field is missing".to_owned(),
-                ))?;
-
-                let credential = DigestUser::new(user_name, password.as_bytes());
-                let registrar = registrar.parse().map_err(|err: AddrParseError| {
-                    CommandParserError::Arguments(err.to_string())
-                })?;
-
-                let command = commands::Register::new(user_name, credential, registrar);
-
-                Ok(command.into())
-            }
-        }
-
-        pub fn get_help(&self) -> &str {
-            "register user=<extension_number> [password=<password>] registrar=<ip:port>"
-        }
-    }
-
-    impl From<Register> for CommandParser {
-        fn from(value: Register) -> Self {
-            CommandParser::Register(value)
-        }
-    }
-
-    pub struct Unregister;
-
-    impl Unregister {
-        pub fn new() -> Self {
-            Self {}
-        }
-
-        pub fn parse(&self, line: &str) -> Result<Command, CommandParserError> {
-            if !line.starts_with("unregister") {
-                Err(CommandParserError::Command)
-            } else {
-                Ok(commands::Unregister::new().into())
-            }
-        }
-
-        pub fn get_help(&self) -> &str {
-            "unregister"
-        }
-    }
-
-    impl From<Unregister> for CommandParser {
-        fn from(value: Unregister) -> Self {
-            CommandParser::Unregister(value)
-        }
-    }
-
-    pub struct MakeCall {
-        parser: Parser,
-    }
-
-    impl MakeCall {
-        pub fn new() -> Self {
-            let parser = Parser::new(["user".into()]);
-            Self { parser }
-        }
-
-        pub fn parse(&self, line: &str) -> Result<Command, CommandParserError> {
-            if !line.starts_with("call") {
-                Err(CommandParserError::Command)
-            } else {
-                let data = self
-                    .parser
-                    .parse(line.trim_start_matches("call"))
-                    .map_err(|err| CommandParserError::Arguments(err.to_string()))?;
-
-                let target_user_name = data.get("user").ok_or(CommandParserError::Arguments(
-                    "\"user\" field is missing".to_owned(),
-                ))?;
-
-                let command = commands::MakeCall::new(target_user_name);
-
-                Ok(command.into())
-            }
-        }
-
-        pub fn get_help(&self) -> &str {
-            "call user=<extension_number>"
-        }
-    }
-
-    impl From<MakeCall> for CommandParser {
-        fn from(value: MakeCall) -> Self {
-            CommandParser::MakeCall(value)
-        }
-    }
-
-    pub struct TerminateCall;
-
-    impl TerminateCall {
-        pub fn new() -> Self {
-            Self {}
-        }
-
-        pub fn parse(&self, line: &str) -> Result<Command, CommandParserError> {
-            if !line.starts_with("terminate call") {
-                Err(CommandParserError::Command)
-            } else {
-                Ok(commands::TerminateCall::new().into())
-            }
-        }
-
-        pub fn get_help(&self) -> &str {
-            "terminate call"
-        }
-    }
-
-    impl From<TerminateCall> for CommandParser {
-        fn from(value: TerminateCall) -> Self {
-            CommandParser::TerminateCall(value)
         }
     }
 }

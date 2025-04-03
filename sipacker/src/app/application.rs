@@ -1,4 +1,8 @@
-use crate::app::{args::Args, cli_input, command::Command};
+use crate::app::{
+    args::Args,
+    cli_input,
+    command::{Command, CommandTrait},
+};
 use crate::sipacker::{
     audio::AudioSystem,
     user_agent::{UserAgent, UserAgentEvent},

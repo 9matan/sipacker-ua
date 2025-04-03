@@ -9,6 +9,7 @@ bytes = "1.10.0"
 clap = { version = "4.5.35", features = ["derive", "env"] }
 cpal = "0.15.3"
 dasp_sample = "0.11.0"
+enum_dispatch = "0.3.13"
 rubato = "0.16.1"
 tokio = "1.43.0"
 tokio-util = "0.7.14"
