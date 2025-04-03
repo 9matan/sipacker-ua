@@ -34,21 +34,25 @@ impl AudioSystem {
     pub fn create_output_stream(&mut self) -> Result<mpsc::Sender<bytes::Bytes>, anyhow::Error> {
         let (tx, rx) = mpsc::channel(100);
         self.out_device.create_stream(rx)?;
+        tracing::info!("Output stream is created");
         Ok(tx)
     }
 
     pub fn destroy_output_stream(&mut self) {
         self.out_device.destroy_stream();
+        tracing::info!("Output stream is destroyed");
     }
 
     pub fn create_input_stream(&mut self) -> Result<mpsc::Receiver<bytes::Bytes>, anyhow::Error> {
         let (tx, rx) = mpsc::channel(100);
         self.in_device.create_stream(tx)?;
+        tracing::info!("Input stream is created");
         Ok(rx)
     }
 
     pub fn destroy_input_stream(&mut self) {
         self.in_device.destroy_stream();
+        tracing::info!("Input stream is destroyed");
     }
 }
 

@@ -16,9 +16,9 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserAgentEvent {
-    CallTerminated,
-    Calling,
     CallEstablished,
+    Calling,
+    CallTerminated,
     Registered,
     Unregistered,
 }

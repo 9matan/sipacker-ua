@@ -1,36 +1,48 @@
-use crate::app::{args::Args, cli_input, commands::Command};
-use crate::sipacker::user_agent::UserAgentEvent;
-use crate::sipacker::{audio::AudioSystem, user_agent::UserAgent};
+use crate::app::{args::Args, cli_input, command::Command};
+use crate::sipacker::{
+    audio::AudioSystem,
+    user_agent::{UserAgent, UserAgentEvent},
+};
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use anyhow::Result;
 use ezk_sip_auth::DigestCredentials;
-use tokio::select;
-use tokio::sync::mpsc;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tokio::{select, sync::mpsc};
 
 pub fn run_app(args: Args) -> Result<()> {
-    init_logger();
-    tracing::info!("Initializing the application");
+    init_logging();
+    tracing::info!("Initializing the application...");
 
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(args.jobs)
-        .enable_io()
-        .enable_time()
-        .build()?;
+    let rt = create_async_runtime(args.jobs)?;
+    tracing::info!("Async runtime is initialized");
     rt.block_on(run_app_inner(args))?;
 
     Ok(())
 }
 
-fn init_logger() {
-    let envfilter = EnvFilter::from_env("RUST_LOG");
+fn init_logging() {
+    use tracing_subscriber::{
+        filter::LevelFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
+    };
+
+    let envfilter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .with_env_var("RUST_LOG")
+        .from_env_lossy();
     tracing_subscriber::registry()
         .with(envfilter)
         .with(fmt::Layer::default())
         .init();
+}
+
+fn create_async_runtime(threads_count: usize) -> std::io::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(threads_count)
+        .enable_io()
+        .enable_time()
+        .build()
 }
 
 async fn run_app_inner(args: Args) -> Result<()> {
@@ -39,7 +51,6 @@ async fn run_app_inner(args: Args) -> Result<()> {
 
     let command_receiver = cli_input::run_input_system();
 
-    tracing::info!("Running the application");
     let mut app = App::build((ua_ip, ua_port).into()).await?;
     app.run(command_receiver).await
 }
@@ -52,7 +63,9 @@ pub(crate) struct App {
 impl App {
     pub(super) async fn build(ua_socket: SocketAddr) -> Result<Self> {
         let user_agent = UserAgent::build(ua_socket).await?;
+        tracing::info!("User agent is initialized");
         let audio_system = AudioSystem::build()?;
+        tracing::info!("Audio system is initialized");
         Ok(Self {
             user_agent,
             audio_system,
@@ -63,6 +76,8 @@ impl App {
         &mut self,
         mut command_receiver: mpsc::Receiver<Command>,
     ) -> Result<()> {
+        tracing::info!("The application is running");
+        println!("The application is running");
         loop {
             select! {
                 command = command_receiver.recv() => if let Some(command) = command {
@@ -98,10 +113,21 @@ impl App {
     }
 
     fn handle_ua_event(&mut self, event: UserAgentEvent) {
-        tracing::info!("Handling UA event: {:?}", event);
+        tracing::debug!("Handling UA event: {:?}", event);
+        self.print_ua_event(&event);
         if event == UserAgentEvent::CallTerminated {
             self.audio_system.destroy_input_stream();
             self.audio_system.destroy_output_stream();
+        }
+    }
+
+    fn print_ua_event(&self, event: &UserAgentEvent) {
+        match event {
+            UserAgentEvent::CallEstablished => println!("The call is established"),
+            UserAgentEvent::Calling => println!("Calling..."),
+            UserAgentEvent::CallTerminated => println!("The call is terminated"),
+            UserAgentEvent::Registered => println!("The agent is registered"),
+            UserAgentEvent::Unregistered => println!("The agent is unregistered"),
         }
     }
 

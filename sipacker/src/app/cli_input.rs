@@ -1,6 +1,6 @@
 use std::{thread, time::Duration};
 
-use crate::app::commands::Command;
+use crate::app::command::Command;
 
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -38,7 +38,7 @@ impl CliInputSystem {
     }
 
     pub fn run(&mut self) -> Result<()> {
-        tracing::info!("Running the CLI input system");
+        tracing::info!("The CLI input system is running");
         loop {
             let command = self.read_command();
             if let Some(command) = command {
@@ -81,10 +81,9 @@ impl CliInputSystem {
         let result = self.parsers.iter().find_map(|parser| {
             let result = parser.parse(line);
             if result.is_ok()
-                || result.as_ref().is_err_and(|err| match err {
-                    CommandParserError::Arguments(_) => true,
-                    _ => false,
-                })
+                || result
+                    .as_ref()
+                    .is_err_and(|err| matches!(err, CommandParserError::Arguments(_s)))
             {
                 Some(result)
             } else {
@@ -141,7 +140,7 @@ impl CommandParser {
 
 mod parsers {
     use super::{CommandParser, CommandParserError};
-    use crate::app::commands::{commands, Command};
+    use crate::app::command::{commands, Command};
 
     use std::{collections::HashMap, net::AddrParseError};
 
