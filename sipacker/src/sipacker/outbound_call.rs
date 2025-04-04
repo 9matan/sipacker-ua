@@ -108,10 +108,7 @@ impl OutboundCall {
                     }
                     Ok(None)
                 }
-                CallEvent::Terminated => {
-                    self.cancel().await;
-                    Ok(Some(UserAgentEvent::CallTerminated))
-                }
+                CallEvent::Terminated => Ok(Some(UserAgentEvent::CallTerminated)),
             }
         } else {
             Ok(None)

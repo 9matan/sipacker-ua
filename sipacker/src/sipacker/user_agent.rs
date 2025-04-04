@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Ok, Result};
+use anyhow::Result;
 use bytes::Bytes;
 use ezk_rtc::AsyncSdpSession;
 use ezk_rtc_proto::{BundlePolicy, Options, RtcpMuxPolicy, TransportType};
@@ -165,27 +165,27 @@ impl UserAgent {
             return Ok(event);
         }
 
-        self.update_call().await;
+        self.update_outbound_call().await;
         Ok(None)
     }
 
-    async fn update_call(&mut self) {
+    async fn update_outbound_call(&mut self) {
         if let Some(call) = self.outbound_call.as_mut() {
-            let event = call.run().await.inspect_err(|err| {
+            let event_res = call.run().await.inspect_err(|err| {
                 tracing::warn!("Outbound call err: {err}");
             });
 
-            let is_err = event.is_err();
-            let event = event.unwrap_or(None);
+            let event = match event_res {
+                Ok(event) => event,
+                Err(_err) => Some(UserAgentEvent::CallTerminated),
+            };
 
-            if event.is_some() {
-                self.events.push_back(event.clone().unwrap());
-            } else if is_err {
-                self.events.push_back(UserAgentEvent::CallTerminated);
-            }
-
-            if is_err || event == Some(UserAgentEvent::CallTerminated) {
-                self.outbound_call.take();
+            if let Some(event) = event {
+                if event == UserAgentEvent::CallTerminated {
+                    call.cancel().await;
+                    self.outbound_call.take();
+                }
+                self.events.push_back(event);
             }
         }
     }
