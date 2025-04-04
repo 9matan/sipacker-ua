@@ -12,6 +12,7 @@ use ezk_rtc::AsyncSdpSession;
 use ezk_rtc_proto::{BundlePolicy, Options, RtcpMuxPolicy, TransportType};
 use ezk_sip::{Client, MediaSession, RegistrarConfig, Registration};
 use ezk_sip_auth::{DigestAuthenticator, DigestCredentials};
+use ezk_sip_types::host::HostPort;
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,7 +35,7 @@ pub struct UserAgent {
 struct RegData {
     pub registration: Registration,
     pub credentials: DigestCredentials,
-    pub registrar_socket: SocketAddr,
+    pub registrar_host: HostPort,
     pub _user_name: String,
 }
 
@@ -67,9 +68,9 @@ impl UserAgent {
         &mut self,
         user_name: &str,
         credentials: DigestCredentials,
-        registrar_socket: SocketAddr,
+        registrar_host: HostPort,
     ) -> Result<()> {
-        let registrar = misc::make_sip_uri(user_name, &registrar_socket)?;
+        let registrar = misc::make_sip_uri(user_name, &registrar_host)?;
         let user_name = user_name.to_owned();
         let config = RegistrarConfig {
             registrar,
@@ -87,7 +88,7 @@ impl UserAgent {
         let reg_data = RegData {
             registration,
             credentials,
-            registrar_socket,
+            registrar_host,
             _user_name: user_name,
         };
         self.reg_data = Some(reg_data);
@@ -112,7 +113,7 @@ impl UserAgent {
             .as_ref()
             .ok_or(anyhow::Error::msg("The user agent is not registered"))?;
 
-        let target = misc::make_sip_uri(target_user_name, &reg_data.registrar_socket)?;
+        let target = misc::make_sip_uri(target_user_name, &reg_data.registrar_host)?;
         let authenticator = reg_data.create_authenticator();
         let media = self.create_media()?;
         let outbound_call = reg_data
@@ -198,19 +199,15 @@ impl RegData {
 }
 
 mod misc {
-    use std::net::SocketAddr;
-
     use anyhow::Result;
-    use ezk_sip_types::uri::sip::{InvalidSipUri, SipUri};
+    use ezk_sip_types::{
+        host::HostPort,
+        uri::sip::{InvalidSipUri, SipUri},
+    };
 
-    pub fn make_sip_uri(user_name: &str, sip_socket: &SocketAddr) -> Result<SipUri> {
-        format!(
-            "sip:{}@{}:{}",
-            user_name,
-            sip_socket.ip(),
-            sip_socket.port()
-        )
-        .parse()
-        .map_err(|err: InvalidSipUri| anyhow::Error::msg(err.to_string()))
+    pub fn make_sip_uri(user_name: &str, sip_domain: &HostPort) -> Result<SipUri> {
+        format!("sip:{}@{}", user_name, sip_domain.to_string(),)
+            .parse()
+            .map_err(|err: InvalidSipUri| anyhow::Error::msg(err.to_string()))
     }
 }

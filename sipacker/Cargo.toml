@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.97"
 bytes = "1.10.0"
+bytesstr = "1.0.2"
 clap = { version = "4.5.35", features = ["derive", "env"] }
 cpal = "0.15.3"
 dasp_sample = "0.11.0"

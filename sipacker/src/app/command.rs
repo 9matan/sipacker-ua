@@ -1,10 +1,11 @@
 use crate::app::application::App;
 
-use std::{fmt::Display, net::SocketAddr};
+use std::fmt::Display;
 
 use anyhow::Result;
 use enum_dispatch::enum_dispatch;
 use ezk_sip_auth::{DigestCredentials, DigestUser};
+use ezk_sip_types::host::HostPort;
 
 #[enum_dispatch]
 pub trait CommandTrait {
@@ -33,15 +34,15 @@ impl Display for Command {
 pub struct Register {
     user_name: String,
     credential: DigestUser,
-    registrar: SocketAddr,
+    registrar_host: HostPort,
 }
 
 impl Register {
-    pub fn new(user_name: &str, credential: DigestUser, registrar: SocketAddr) -> Self {
+    pub fn new(user_name: &str, credential: DigestUser, registrar_host: HostPort) -> Self {
         Self {
             user_name: user_name.to_owned(),
             credential,
-            registrar,
+            registrar_host,
         }
     }
 }
@@ -50,7 +51,7 @@ impl CommandTrait for Register {
     async fn execute(self, app: &mut App) -> Result<()> {
         let mut credentials = DigestCredentials::new();
         credentials.set_default(self.credential);
-        app.register_ua(&self.user_name, credentials, self.registrar)
+        app.register_ua(&self.user_name, credentials, self.registrar_host)
             .await
     }
 }
@@ -60,7 +61,8 @@ impl DisplayExt for Register {
         write!(
             f,
             "register {{user:{}; registrar:{}}}",
-            self.user_name, self.registrar
+            self.user_name,
+            self.registrar_host.to_string(),
         )
     }
 }

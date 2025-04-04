@@ -1,4 +1,4 @@
-use std::{net::AddrParseError, thread, time::Duration};
+use std::{thread, time::Duration};
 
 use crate::app::command::{self, Command};
 
@@ -158,11 +158,10 @@ impl CommandParserTrait for RegisterParser {
             ))?;
 
             let credential = DigestUser::new(user_name, password.as_bytes());
-            let registrar = registrar
-                .parse()
-                .map_err(|err: AddrParseError| CommandParserError::Arguments(err.to_string()))?;
+            let registrar_host = parser::parse_host_port(registrar)
+                .map_err(|err| CommandParserError::Arguments(err.to_string()))?;
 
-            let command = command::Register::new(user_name, credential, registrar);
+            let command = command::Register::new(user_name, credential, registrar_host);
 
             Ok(command.into())
         }
@@ -257,6 +256,8 @@ mod parser {
     use std::collections::HashMap;
 
     use anyhow::Result;
+    use bytesstr::BytesStr;
+    use ezk_sip_types::{host::HostPort, parse::ParseCtx};
 
     pub struct Parser {
         fields: Vec<String>,
@@ -294,6 +295,16 @@ mod parser {
                 .ok_or(anyhow::Error::msg("Field value is missing"))?;
             Ok((name, value))
         }
+    }
+
+    pub fn parse_host_port(s: &str) -> Result<HostPort> {
+        let s = BytesStr::from(s);
+        let ctx = ParseCtx::new(s.as_ref(), ezk_sip_types::parse::Parser::default());
+
+        let res = HostPort::parse(ctx)(&s)
+            .map(|(_, host_port)| host_port)
+            .map_err(|err| anyhow::Error::msg(err.to_string()));
+        res
     }
 }
 

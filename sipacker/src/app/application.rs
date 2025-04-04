@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use ezk_sip_auth::DigestCredentials;
+use ezk_sip_types::host::HostPort;
 use tokio::{select, sync::mpsc};
 
 pub fn run_app(args: Args) -> Result<()> {
@@ -139,11 +140,11 @@ impl App {
         &mut self,
         user_name: &str,
         credentials: DigestCredentials,
-        registrar_socket: SocketAddr,
+        registrar_host: HostPort,
     ) -> Result<()> {
         tracing::info!("Registering the UA: {user_name}");
         self.user_agent
-            .register(user_name, credentials, registrar_socket)
+            .register(user_name, credentials, registrar_host)
             .await
     }
 
