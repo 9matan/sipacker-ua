@@ -1,4 +1,4 @@
-use crate::sipacker::outbound_call::OutboundCall;
+use crate::sipacker::call;
 
 use std::{
     collections::VecDeque,
@@ -29,7 +29,7 @@ pub struct UserAgent {
     ip_addr: IpAddr,
     events: VecDeque<UserAgentEvent>,
     reg_data: Option<RegData>,
-    outbound_call: Option<OutboundCall>,
+    call: Option<call::Call>,
 }
 
 struct RegData {
@@ -52,7 +52,7 @@ impl UserAgent {
             ip_addr,
             events: VecDeque::new(),
             reg_data: None,
-            outbound_call: None,
+            call: None,
         })
     }
 
@@ -61,7 +61,7 @@ impl UserAgent {
     }
 
     pub fn has_active_call(&self) -> bool {
-        self.outbound_call.is_some()
+        self.call.is_some()
     }
 
     pub async fn register(
@@ -120,10 +120,8 @@ impl UserAgent {
             .registration
             .make_call(target, authenticator, media)
             .await?;
-        let waiting_timeout = Duration::from_secs(10);
-        let outbound_call =
-            OutboundCall::new(outbound_call, audio_sender, audio_receiver, waiting_timeout);
-        self.outbound_call = Some(outbound_call);
+        let call = call::Call::from_outgoing(outbound_call, audio_sender, audio_receiver);
+        self.call = Some(call);
 
         self.events.push_back(UserAgentEvent::Calling);
         Ok(())
@@ -153,8 +151,8 @@ impl UserAgent {
     }
 
     pub async fn terminate_call(&mut self) -> Result<()> {
-        if let Some(mut call) = self.outbound_call.take() {
-            call.cancel().await;
+        if let Some(call) = self.call.take() {
+            call.terminate().await?;
             self.events.push_back(UserAgentEvent::CallTerminated);
         }
         Ok(())
@@ -166,29 +164,35 @@ impl UserAgent {
             return Ok(event);
         }
 
-        self.update_outbound_call().await;
+        self.update_call().await;
         Ok(None)
     }
 
-    async fn update_outbound_call(&mut self) {
-        if let Some(call) = self.outbound_call.as_mut() {
-            let event_res = call.run().await.inspect_err(|err| {
-                tracing::warn!("Outbound call err: {err}");
+    async fn update_call(&mut self) {
+        self.call = if let Some(call) = self.call.take() {
+            let run_res = call.run().await.inspect_err(|err| {
+                tracing::warn!("Call err: {err}");
             });
 
-            let event = match event_res {
-                Ok(event) => event,
-                Err(_err) => Some(UserAgentEvent::CallTerminated),
+            let (call, event) = match run_res {
+                Ok((call, event)) => {
+                    let event = event.map(|event| match event {
+                        call::Event::Established => UserAgentEvent::CallEstablished,
+                        call::Event::Terminated => UserAgentEvent::CallTerminated,
+                    });
+                    (call, event)
+                }
+                Err(_err) => (None, Some(UserAgentEvent::CallTerminated)),
             };
 
             if let Some(event) = event {
-                if event == UserAgentEvent::CallTerminated {
-                    call.cancel().await;
-                    self.outbound_call.take();
-                }
                 self.events.push_back(event);
             }
-        }
+
+            call
+        } else {
+            None
+        };
     }
 }
 

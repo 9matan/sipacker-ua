@@ -84,13 +84,13 @@ impl App {
         tracing::info!("The application is running");
         println!("The application is running");
         loop {
-            select! {
-                command = command_receiver.recv() => if let Some(command) = command {
-                    self.execute_command(command).await
-                },
-                _ = self.update_user_agent() => (),
+            self.update_user_agent().await;
+            match command_receiver.try_recv() {
+                Ok(command) => {
+                    self.execute_command(command).await;
+                }
+                Err(_) => (),
             }
-
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
