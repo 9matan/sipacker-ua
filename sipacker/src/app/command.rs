@@ -23,6 +23,7 @@ pub enum Command {
     Unregister,
     MakeCall,
     TerminateCall,
+    StopApp,
 }
 
 impl Display for Command {
@@ -131,5 +132,26 @@ impl CommandTrait for TerminateCall {
 impl DisplayExt for TerminateCall {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "terminate call")
+    }
+}
+
+#[derive(Debug)]
+pub struct StopApp;
+
+impl StopApp {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CommandTrait for StopApp {
+    async fn execute(self, app: &mut App) -> Result<()> {
+        app.stop_app()
+    }
+}
+
+impl DisplayExt for StopApp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "stop app")
     }
 }

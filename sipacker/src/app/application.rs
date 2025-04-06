@@ -14,7 +14,7 @@ use std::time::Duration;
 use anyhow::Result;
 use ezk_sip_auth::DigestCredentials;
 use ezk_sip_types::host::HostPort;
-use tokio::{select, sync::mpsc};
+use tokio::sync::mpsc;
 
 pub fn run_app(args: Args) -> Result<()> {
     init_logging();
@@ -61,6 +61,7 @@ async fn run_app_inner(args: Args) -> Result<()> {
 }
 
 pub(crate) struct App {
+    stop_app: bool,
     user_agent: UserAgent,
     audio_system: AudioSystem,
 }
@@ -72,6 +73,7 @@ impl App {
         let audio_system = AudioSystem::build()?;
         tracing::info!("Audio system is initialized");
         Ok(Self {
+            stop_app: false,
             user_agent,
             audio_system,
         })
@@ -83,16 +85,14 @@ impl App {
     ) -> Result<()> {
         tracing::info!("The application is running");
         println!("The application is running");
-        loop {
+        while !self.stop_app {
             self.update_user_agent().await;
-            match command_receiver.try_recv() {
-                Ok(command) => {
-                    self.execute_command(command).await;
-                }
-                Err(_) => (),
+            if let Ok(command) = command_receiver.try_recv() {
+                self.execute_command(command).await;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+        Ok(())
     }
 
     async fn execute_command(&mut self, command: Command) {
@@ -180,6 +180,11 @@ impl App {
 
     pub(crate) async fn unregister(&mut self) -> Result<()> {
         self.user_agent.unregister();
+        Ok(())
+    }
+
+    pub(crate) fn stop_app(&mut self) -> Result<()> {
+        self.stop_app = true;
         Ok(())
     }
 }

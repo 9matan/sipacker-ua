@@ -67,7 +67,7 @@ impl CliInputSystem {
             self.print_help();
             None
         } else {
-            self.parse_command(&line)
+            self.parse_command(line)
         }
     }
 
@@ -78,10 +78,15 @@ impl CliInputSystem {
         }
     }
 
-    fn parse_command(&self, line: &str) -> Option<Command> {
+    fn parse_command(&self, mut line: String) -> Option<Command> {
+        if line.is_empty() {
+            return Some(command::StopApp::new().into());
+        }
+        misc::trim_newline(&mut line);
+
         // skip CommandParserError::Command error, try to find a parser for a command with a specified name
         let result = self.parsers.iter().find_map(|parser| {
-            let result = parser.parse(line);
+            let result = parser.parse(&line);
             if result.is_ok()
                 || result
                     .as_ref()
@@ -316,14 +321,11 @@ mod misc {
             .inspect_err(|err| {
                 tracing::warn!("CLI input system err: {err}");
             })
-            .map(|_| {
-                trim_newline(&mut buf);
-                buf
-            })
+            .map(|_| buf)
             .ok()
     }
 
-    fn trim_newline(s: &mut String) {
+    pub fn trim_newline(s: &mut String) {
         if s.ends_with('\n') {
             s.pop();
             if s.ends_with('\r') {

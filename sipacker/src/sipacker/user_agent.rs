@@ -3,7 +3,6 @@ use crate::sipacker::call;
 use std::{
     collections::VecDeque,
     net::{IpAddr, SocketAddr},
-    time::Duration,
 };
 
 use anyhow::Result;
