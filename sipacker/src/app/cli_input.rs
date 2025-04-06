@@ -279,7 +279,7 @@ mod parser {
             let mut data = HashMap::new();
 
             for token in tokens.filter(|token| !token.is_empty()) {
-                let (name, value) = self.parse_field(token)?;
+                let (name, value) = Self::parse_field(token)?;
                 if self.fields.contains(&name.into()) {
                     let _ = data.insert(name.into(), value.to_owned());
                 } else {
@@ -290,7 +290,7 @@ mod parser {
             Ok(data)
         }
 
-        fn parse_field<'a>(&self, token: &'a str) -> Result<(&'a str, &'a str)> {
+        fn parse_field<'a>(token: &'a str) -> Result<(&'a str, &'a str)> {
             let mut field = token.split('=');
             let name = field
                 .next()
@@ -298,7 +298,14 @@ mod parser {
             let value = field
                 .next()
                 .ok_or(anyhow::Error::msg("Field value is missing"))?;
-            Ok((name, value))
+
+            if let Some(_) = field.next() {
+                Err(anyhow::Error::msg(
+                    "There are more than 1 \'=\' in the field",
+                ))
+            } else {
+                Ok((name, value))
+            }
         }
     }
 

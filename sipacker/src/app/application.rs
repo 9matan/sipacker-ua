@@ -67,8 +67,8 @@ pub(crate) struct App {
 }
 
 impl App {
-    pub(super) async fn build(ua_socket: SocketAddr) -> Result<Self> {
-        let user_agent = UserAgent::build(ua_socket).await?;
+    pub(super) async fn build(ua_socketaddr: SocketAddr) -> Result<Self> {
+        let user_agent = UserAgent::build(ua_socketaddr).await?;
         tracing::info!("User agent is initialized");
         let audio_system = AudioSystem::build()?;
         tracing::info!("Audio system is initialized");
@@ -119,14 +119,14 @@ impl App {
 
     fn handle_ua_event(&mut self, event: UserAgentEvent) {
         tracing::debug!("Handling UA event: {:?}", event);
-        self.print_ua_event(&event);
+        Self::print_ua_event(&event);
         if event == UserAgentEvent::CallTerminated {
             self.audio_system.destroy_input_stream();
             self.audio_system.destroy_output_stream();
         }
     }
 
-    fn print_ua_event(&self, event: &UserAgentEvent) {
+    fn print_ua_event(event: &UserAgentEvent) {
         match event {
             UserAgentEvent::CallEstablished => println!("The call is established"),
             UserAgentEvent::Calling => println!("Calling..."),
