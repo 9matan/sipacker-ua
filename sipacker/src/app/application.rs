@@ -120,7 +120,7 @@ impl App {
     fn handle_ua_event(&mut self, event: UserAgentEvent) {
         tracing::debug!("Handling UA event: {:?}", event);
         Self::print_ua_event(&event);
-        if event == UserAgentEvent::CallTerminated {
+        if let UserAgentEvent::CallTerminated = event {
             self.audio_system.destroy_input_stream();
             self.audio_system.destroy_output_stream();
         }
@@ -131,6 +131,9 @@ impl App {
             UserAgentEvent::CallEstablished => println!("The call is established"),
             UserAgentEvent::Calling => println!("Calling..."),
             UserAgentEvent::CallTerminated => println!("The call is terminated"),
+            UserAgentEvent::IncomingCall(from) => {
+                println!("There is an incoming call from {:?}", from.uri.uri)
+            }
             UserAgentEvent::Registered => println!("The agent is registered"),
             UserAgentEvent::Unregistered => println!("The agent is unregistered"),
         }
@@ -165,6 +168,18 @@ impl App {
                 .make_call(target_user_name, audio_sender, audio_receiver)
                 .await
         }
+    }
+
+    pub(crate) async fn accept_call(&mut self) -> Result<()> {
+        let audio_sender = self.audio_system.create_output_stream()?;
+        let audio_receiver = self.audio_system.create_input_stream()?;
+        self.user_agent
+            .accept_incoming_call(audio_sender, audio_receiver)
+            .await
+    }
+
+    pub(crate) async fn decline_call(&mut self) -> Result<()> {
+        self.user_agent.decline_incoming_call().await
     }
 
     pub(crate) async fn terminate_call(&mut self) -> Result<()> {

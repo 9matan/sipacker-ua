@@ -2,13 +2,16 @@ use std::time::Duration;
 
 use anyhow::Result;
 use bytes::Bytes;
+use bytesstr::BytesStr;
 use enum_dispatch::enum_dispatch;
 use ezk_sip::{Codec, MediaSession, RtpReceiver, RtpSender};
+use ezk_sip_types::StatusCode;
 use tokio::{select, sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 type CallInner = ezk_sip::Call<MediaSession>;
-type OutboundCallInner = ezk_sip::OutboundCall<MediaSession>;
+type IncomingCallInner = ezk_sip::IncomingCall<MediaSession>;
+type OutgoingCallInner = ezk_sip::OutboundCall<MediaSession>;
 
 pub struct Call {
     state: State,
@@ -16,12 +19,22 @@ pub struct Call {
 
 impl Call {
     pub fn from_outgoing(
-        outbound_call: OutboundCallInner,
+        outgoing_call: OutgoingCallInner,
         audio_sender: mpsc::Sender<Bytes>,
         audio_receiver: mpsc::Receiver<Bytes>,
     ) -> Self {
         let waiting_timeout = Duration::from_secs(10);
-        let state = OutgoingCall::new(outbound_call, audio_sender, audio_receiver, waiting_timeout);
+        let state = OutgoingCall::new(outgoing_call, audio_sender, audio_receiver, waiting_timeout);
+        Self {
+            state: state.into(),
+        }
+    }
+
+    pub fn from_incoming(
+        incoming_call: IncomingCallInner,
+        action_receiver: mpsc::Receiver<IncomingCallAction>,
+    ) -> Self {
+        let state = IncomingCall::new(incoming_call, action_receiver);
         Self {
             state: state.into(),
         }
@@ -50,6 +63,7 @@ trait StateTrait {
 
 #[enum_dispatch(StateTrait)]
 enum State {
+    IncomingCall,
     OutgoingCall,
     EstablishedCall,
 }
@@ -63,14 +77,14 @@ struct OutgoingCall {
 
 impl OutgoingCall {
     fn new(
-        outbound_call: OutboundCallInner,
+        outgoing_call: OutgoingCallInner,
         audio_sender: mpsc::Sender<Bytes>,
         audio_receiver: mpsc::Receiver<Bytes>,
         waiting_timeout: Duration,
     ) -> Self {
         let cancellation = CancellationToken::new();
         let calling_task = tokio::spawn(Self::run_calling_task(
-            outbound_call,
+            outgoing_call,
             cancellation.clone(),
             waiting_timeout,
         ));
@@ -83,20 +97,20 @@ impl OutgoingCall {
     }
 
     async fn run_calling_task(
-        mut outbound_call: ezk_sip::OutboundCall<MediaSession>,
+        mut outgoing_call: ezk_sip::OutboundCall<MediaSession>,
         cancellation: CancellationToken,
         waiting_duration: Duration,
     ) -> Result<CallInner> {
         let completed_call = select! {
             _ = cancellation.cancelled() => Err(anyhow::Error::msg("Outbound call is cancelled")),
             _ = tokio::time::sleep(waiting_duration) => Err(anyhow::Error::msg("Outbound call is timed out")),
-            completed = outbound_call.wait_for_completion() => {
+            completed = outgoing_call.wait_for_completion() => {
                 completed.map_err(|err| anyhow::Error::msg(err.to_string()))
             }
         };
 
         if completed_call.is_err() {
-            outbound_call.cancel().await?;
+            outgoing_call.cancel().await?;
         }
         let completed_call = completed_call?;
 
@@ -123,6 +137,88 @@ impl StateTrait for OutgoingCall {
         self.cancellation.cancel();
         let _ = self.calling_task.await?;
         Ok(())
+    }
+}
+
+struct IncomingCall {
+    incoming_call: IncomingCallInner,
+    action_receiver: mpsc::Receiver<IncomingCallAction>,
+}
+
+pub enum IncomingCallAction {
+    Decline,
+    Accept {
+        audio_sender: mpsc::Sender<Bytes>,
+        audio_receiver: mpsc::Receiver<Bytes>,
+    },
+}
+
+impl IncomingCall {
+    fn new(
+        incoming_call: IncomingCallInner,
+        action_receiver: mpsc::Receiver<IncomingCallAction>,
+    ) -> Self {
+        Self {
+            incoming_call,
+            action_receiver,
+        }
+    }
+
+    async fn handle_action(self, action: IncomingCallAction) -> Result<(Option<State>, Event)> {
+        match action {
+            IncomingCallAction::Decline => {
+                self.incoming_call
+                    .decline(
+                        StatusCode::DECLINE,
+                        BytesStr::from_static("The call is declined").into(),
+                    )
+                    .await?;
+
+                Ok((None, Event::Terminated))
+            }
+            IncomingCallAction::Accept {
+                audio_sender,
+                audio_receiver,
+            } => {
+                let call = self.incoming_call.accept().await?;
+                let state = EstablishedCall::new(call, audio_sender, audio_receiver);
+                Ok((Some(state.into()), Event::Established))
+            }
+        }
+    }
+}
+
+impl StateTrait for IncomingCall {
+    async fn run(mut self) -> Result<(Option<State>, Option<Event>)> {
+        match self.action_receiver.try_recv() {
+            Ok(action) => self
+                .handle_action(action)
+                .await
+                .map(|(state, event)| (state, Some(event))),
+            Err(err) => match err {
+                mpsc::error::TryRecvError::Empty => Ok((Some(self.into()), None)),
+                mpsc::error::TryRecvError::Disconnected => {
+                    let _ = self
+                        .incoming_call
+                        .decline(
+                            StatusCode::SERVER_INTERNAL_ERROR,
+                            BytesStr::from(err.to_string().as_ref()).into(),
+                        )
+                        .await;
+                    Err(err.into())
+                }
+            },
+        }
+    }
+
+    async fn terminate(self) -> Result<()> {
+        self.incoming_call
+            .decline(
+                StatusCode::DECLINE,
+                BytesStr::from_static("The call is terminated").into(),
+            )
+            .await
+            .map_err(|err| err.into())
     }
 }
 

@@ -22,6 +22,8 @@ pub enum Command {
     Register,
     Unregister,
     MakeCall,
+    AcceptCall,
+    DeclineCall,
     TerminateCall,
     StopApp,
 }
@@ -153,5 +155,47 @@ impl CommandTrait for StopApp {
 impl DisplayExt for StopApp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "stop app")
+    }
+}
+
+#[derive(Debug)]
+pub struct AcceptCall;
+
+impl AcceptCall {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CommandTrait for AcceptCall {
+    async fn execute(self, app: &mut App) -> Result<()> {
+        app.accept_call().await
+    }
+}
+
+impl DisplayExt for AcceptCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "accept call")
+    }
+}
+
+#[derive(Debug)]
+pub struct DeclineCall;
+
+impl DeclineCall {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CommandTrait for DeclineCall {
+    async fn execute(self, app: &mut App) -> Result<()> {
+        app.decline_call().await
+    }
+}
+
+impl DisplayExt for DeclineCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "decline call")
     }
 }

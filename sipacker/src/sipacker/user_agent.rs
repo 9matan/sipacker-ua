@@ -7,18 +7,20 @@ use std::{
 
 use anyhow::Result;
 use bytes::Bytes;
+use bytesstr::BytesStr;
 use ezk_rtc::AsyncSdpSession;
 use ezk_rtc_proto::{BundlePolicy, Options, RtcpMuxPolicy, TransportType};
 use ezk_sip::{Client, MediaSession, RegistrarConfig, Registration};
 use ezk_sip_auth::{DigestAuthenticator, DigestCredentials};
-use ezk_sip_types::host::HostPort;
+use ezk_sip_types::{header::typed::FromTo, host::HostPort, StatusCode};
 use tokio::sync::mpsc;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum UserAgentEvent {
     CallEstablished,
     Calling,
     CallTerminated,
+    IncomingCall(FromTo),
     Registered,
     Unregistered,
 }
@@ -29,6 +31,7 @@ pub struct UserAgent {
     events: VecDeque<UserAgentEvent>,
     reg_data: Option<RegData>,
     call: Option<call::Call>,
+    in_call_action_sender: Option<mpsc::Sender<call::IncomingCallAction>>,
 }
 
 struct RegData {
@@ -52,6 +55,7 @@ impl UserAgent {
             events: VecDeque::new(),
             reg_data: None,
             call: None,
+            in_call_action_sender: None,
         })
     }
 
@@ -61,6 +65,10 @@ impl UserAgent {
 
     pub fn has_active_call(&self) -> bool {
         self.call.is_some()
+    }
+
+    pub fn has_incoming_call(&self) -> bool {
+        self.in_call_action_sender.is_some()
     }
 
     pub async fn register(
@@ -149,9 +157,39 @@ impl UserAgent {
         Ok(MediaSession::new(sdp_session))
     }
 
+    pub async fn accept_incoming_call(
+        &mut self,
+        audio_sender: mpsc::Sender<Bytes>,
+        audio_receiver: mpsc::Receiver<Bytes>,
+    ) -> Result<()> {
+        let sender = self
+            .in_call_action_sender
+            .take()
+            .ok_or(anyhow::Error::msg("There is no incoming call to accept"))?;
+
+        sender
+            .send(call::IncomingCallAction::Accept {
+                audio_sender,
+                audio_receiver,
+            })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn decline_incoming_call(&mut self) -> Result<()> {
+        let sender = self
+            .in_call_action_sender
+            .take()
+            .ok_or(anyhow::Error::msg("There is no incoming call to decline"))?;
+
+        sender.send(call::IncomingCallAction::Decline).await?;
+        Ok(())
+    }
+
     pub async fn terminate_call(&mut self) -> Result<()> {
         if let Some(call) = self.call.take() {
             call.terminate().await?;
+            self.in_call_action_sender = None;
             self.events.push_back(UserAgentEvent::CallTerminated);
         }
         Ok(())
@@ -163,8 +201,41 @@ impl UserAgent {
             return Ok(event);
         }
 
+        self.handle_incoming_call_req().await?;
         self.update_call().await;
         Ok(None)
+    }
+
+    async fn handle_incoming_call_req(&mut self) -> Result<()> {
+        if let Some(reg_data) = &mut self.reg_data {
+            let result = self
+                .sip_client
+                .get_incoming_call(reg_data.registration.contact().clone())
+                .await;
+            if let Ok(Some((incoming_call, from))) = result {
+                if self.has_active_call() {
+                    tracing::debug!("Reject incoming call: there is the active call already");
+                    let _ = incoming_call
+                        .decline(
+                            StatusCode::BUSY_HERE,
+                            BytesStr::from("There is an active call").into(),
+                        )
+                        .await
+                        .inspect_err(|err| {
+                            tracing::warn!("Declining error: {err}");
+                        });
+                } else {
+                    let (action_tx, action_rx) = mpsc::channel(1);
+                    let incoming_call = incoming_call.with_media(self.create_media()?);
+                    let call = call::Call::from_incoming(incoming_call, action_rx);
+                    self.in_call_action_sender = Some(action_tx);
+                    self.call = Some(call);
+                    self.events.push_back(UserAgentEvent::IncomingCall(from));
+                }
+            }
+        }
+
+        Ok(())
     }
 
     async fn update_call(&mut self) {
@@ -192,6 +263,10 @@ impl UserAgent {
         } else {
             None
         };
+
+        if self.call.is_none() {
+            self.in_call_action_sender = None;
+        }
     }
 }
 
@@ -209,7 +284,7 @@ mod misc {
     };
 
     pub fn make_sip_uri(user_name: &str, sip_domain: &HostPort) -> Result<SipUri> {
-        format!("sip:{}@{}", user_name, sip_domain.to_string(),)
+        format!("sip:sip@{}", sip_domain.to_string(),)
             .parse()
             .map_err(|err: InvalidSipUri| anyhow::Error::msg(err.to_string()))
     }

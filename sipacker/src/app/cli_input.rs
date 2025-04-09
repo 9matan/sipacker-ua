@@ -31,6 +31,8 @@ impl CliInputSystem {
             RegisterParser::new().into(),
             UnregisterParser::new().into(),
             MakeCallParser::new().into(),
+            AcceptCallParser::new().into(),
+            DeclineCallParser::new().into(),
             TerminateCallParser::new().into(),
         ];
         Self {
@@ -129,6 +131,8 @@ enum CommandParser {
     RegisterParser,
     UnregisterParser,
     MakeCallParser,
+    AcceptCallParser,
+    DeclineCallParser,
     TerminateCallParser,
 }
 
@@ -232,6 +236,50 @@ impl CommandParserTrait for MakeCallParser {
 
     fn get_help(&self) -> &str {
         "call user=<extension_number>"
+    }
+}
+
+pub struct AcceptCallParser;
+
+impl AcceptCallParser {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CommandParserTrait for AcceptCallParser {
+    fn parse(&self, line: &str) -> Result<Command, CommandParserError> {
+        if !line.starts_with("accept call") {
+            Err(CommandParserError::Command)
+        } else {
+            Ok(command::AcceptCall::new().into())
+        }
+    }
+
+    fn get_help(&self) -> &str {
+        "accept call"
+    }
+}
+
+pub struct DeclineCallParser;
+
+impl DeclineCallParser {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CommandParserTrait for DeclineCallParser {
+    fn parse(&self, line: &str) -> Result<Command, CommandParserError> {
+        if !line.starts_with("decline call") {
+            Err(CommandParserError::Command)
+        } else {
+            Ok(command::DeclineCall::new().into())
+        }
+    }
+
+    fn get_help(&self) -> &str {
+        "decline call"
     }
 }
 
