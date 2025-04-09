@@ -142,6 +142,7 @@ impl StateTrait for OutgoingCall {
 
 struct IncomingCall {
     calling_task: JoinHandle<Result<Option<EstablishedCall>>>,
+    cancellation: CancellationToken,
 }
 
 pub enum IncomingCallAction {
@@ -157,15 +158,29 @@ impl IncomingCall {
         incoming_call: IncomingCallInner,
         action_receiver: mpsc::Receiver<IncomingCallAction>,
     ) -> Self {
-        let calling_task = tokio::spawn(Self::run_calling_task(incoming_call, action_receiver));
-        Self { calling_task }
+        let cancellation = CancellationToken::new();
+        let calling_task = tokio::spawn(Self::run_calling_task(
+            incoming_call,
+            cancellation.clone(),
+            action_receiver,
+        ));
+        Self {
+            calling_task,
+            cancellation,
+        }
     }
 
     async fn run_calling_task(
         incoming_call: IncomingCallInner,
+        cancellation: CancellationToken,
         mut action_receiver: mpsc::Receiver<IncomingCallAction>,
     ) -> Result<Option<EstablishedCall>> {
-        match action_receiver.recv().await {
+        let action = select! {
+            action = action_receiver.recv() => action,
+            _ = cancellation.cancelled() => Some(IncomingCallAction::Decline),
+        };
+
+        match action {
             Some(action) => Self::handle_action(incoming_call, action).await,
             None => {
                 let err_msg = "Action channel is closed";
@@ -221,7 +236,7 @@ impl StateTrait for IncomingCall {
     }
 
     async fn terminate(self) -> Result<()> {
-        self.calling_task.abort();
+        self.cancellation.cancel();
         Ok(())
     }
 }
@@ -232,9 +247,8 @@ pub async fn run_declining_task<T: Send + 'static>(
     reason: Option<BytesStr>,
 ) {
     tokio::spawn(async move {
-        let _ = incoming_call.decline(
-            code,
-            reason,)
+        let _ = incoming_call
+            .decline(code, reason)
             .await
             .inspect_err(|err| {
                 tracing::warn!("Declining error: {err}");

@@ -77,7 +77,7 @@ impl UserAgent {
         credentials: DigestCredentials,
         registrar_host: HostPort,
     ) -> Result<()> {
-        let registrar = misc::make_sip_uri(user_name, &registrar_host)?;
+        let registrar = misc::make_sip_uri("sip", &registrar_host)?;
         let user_name = user_name.to_owned();
         let config = RegistrarConfig {
             registrar,
@@ -218,8 +218,9 @@ impl UserAgent {
                     call::run_declining_task(
                         incoming_call,
                         StatusCode::BUSY_HERE,
-                        BytesStr::from("There is an active call").into()
-                    ).await;
+                        BytesStr::from("There is an active call").into(),
+                    )
+                    .await;
                 } else {
                     let (action_tx, action_rx) = mpsc::channel(1);
                     let incoming_call = incoming_call.with_media(self.create_media()?);
@@ -280,7 +281,7 @@ mod misc {
     };
 
     pub fn make_sip_uri(user_name: &str, sip_domain: &HostPort) -> Result<SipUri> {
-        format!("sip:sip@{}", sip_domain.to_string(),)
+        format!("sip:{}@{}", user_name, sip_domain.to_string(),)
             .parse()
             .map_err(|err: InvalidSipUri| anyhow::Error::msg(err.to_string()))
     }
