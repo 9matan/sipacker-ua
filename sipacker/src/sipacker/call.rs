@@ -141,8 +141,7 @@ impl StateTrait for OutgoingCall {
 }
 
 struct IncomingCall {
-    incoming_call: IncomingCallInner,
-    action_receiver: mpsc::Receiver<IncomingCallAction>,
+    calling_task: JoinHandle<Result<Option<EstablishedCall>>>,
 }
 
 pub enum IncomingCallAction {
@@ -158,68 +157,89 @@ impl IncomingCall {
         incoming_call: IncomingCallInner,
         action_receiver: mpsc::Receiver<IncomingCallAction>,
     ) -> Self {
-        Self {
-            incoming_call,
-            action_receiver,
+        let calling_task = tokio::spawn(Self::run_calling_task(incoming_call, action_receiver));
+        Self { calling_task }
+    }
+
+    async fn run_calling_task(
+        incoming_call: IncomingCallInner,
+        mut action_receiver: mpsc::Receiver<IncomingCallAction>,
+    ) -> Result<Option<EstablishedCall>> {
+        match action_receiver.recv().await {
+            Some(action) => Self::handle_action(incoming_call, action).await,
+            None => {
+                let err_msg = "Action channel is closed";
+                let _ = incoming_call
+                    .decline(
+                        StatusCode::SERVER_INTERNAL_ERROR,
+                        BytesStr::from_static(err_msg).into(),
+                    )
+                    .await;
+                Err(anyhow::Error::msg(err_msg))
+            }
         }
     }
 
-    async fn handle_action(self, action: IncomingCallAction) -> Result<(Option<State>, Event)> {
+    async fn handle_action(
+        incoming_call: IncomingCallInner,
+        action: IncomingCallAction,
+    ) -> Result<Option<EstablishedCall>> {
         match action {
+            IncomingCallAction::Accept {
+                audio_sender,
+                audio_receiver,
+            } => {
+                let call = incoming_call.accept().await?;
+                let call = EstablishedCall::new(call, audio_sender, audio_receiver);
+                Ok(Some(call))
+            }
             IncomingCallAction::Decline => {
-                self.incoming_call
+                incoming_call
                     .decline(
                         StatusCode::DECLINE,
                         BytesStr::from_static("The call is declined").into(),
                     )
                     .await?;
-
-                Ok((None, Event::Terminated))
-            }
-            IncomingCallAction::Accept {
-                audio_sender,
-                audio_receiver,
-            } => {
-                let call = self.incoming_call.accept().await?;
-                let state = EstablishedCall::new(call, audio_sender, audio_receiver);
-                Ok((Some(state.into()), Event::Established))
+                Ok(None)
             }
         }
     }
 }
 
 impl StateTrait for IncomingCall {
-    async fn run(mut self) -> Result<(Option<State>, Option<Event>)> {
-        match self.action_receiver.try_recv() {
-            Ok(action) => self
-                .handle_action(action)
-                .await
-                .map(|(state, event)| (state, Some(event))),
-            Err(err) => match err {
-                mpsc::error::TryRecvError::Empty => Ok((Some(self.into()), None)),
-                mpsc::error::TryRecvError::Disconnected => {
-                    let _ = self
-                        .incoming_call
-                        .decline(
-                            StatusCode::SERVER_INTERNAL_ERROR,
-                            BytesStr::from(err.to_string().as_ref()).into(),
-                        )
-                        .await;
-                    Err(err.into())
-                }
-            },
+    async fn run(self) -> Result<(Option<State>, Option<Event>)> {
+        if self.calling_task.is_finished() {
+            let call = self.calling_task.await??;
+            let event = match call {
+                Some(_) => Event::Established,
+                None => Event::Terminated,
+            };
+            Ok((call.map(|c| c.into()), Some(event)))
+        } else {
+            Ok((Some(self.into()), None))
         }
     }
 
     async fn terminate(self) -> Result<()> {
-        self.incoming_call
-            .decline(
-                StatusCode::DECLINE,
-                BytesStr::from_static("The call is terminated").into(),
-            )
-            .await
-            .map_err(|err| err.into())
+        self.calling_task.abort();
+        Ok(())
     }
+}
+
+pub async fn run_declining_task<T: Send + 'static>(
+    incoming_call: ezk_sip::IncomingCall<T>,
+    code: StatusCode,
+    reason: Option<BytesStr>,
+) {
+    tokio::spawn(async move {
+        let _ = incoming_call.decline(
+            code,
+            reason,)
+            .await
+            .inspect_err(|err| {
+                tracing::warn!("Declining error: {err}");
+            });
+    });
 }
 
 struct EstablishedCall {

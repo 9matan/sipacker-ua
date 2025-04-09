@@ -215,15 +215,11 @@ impl UserAgent {
             if let Ok(Some((incoming_call, from))) = result {
                 if self.has_active_call() {
                     tracing::debug!("Reject incoming call: there is the active call already");
-                    let _ = incoming_call
-                        .decline(
-                            StatusCode::BUSY_HERE,
-                            BytesStr::from("There is an active call").into(),
-                        )
-                        .await
-                        .inspect_err(|err| {
-                            tracing::warn!("Declining error: {err}");
-                        });
+                    call::run_declining_task(
+                        incoming_call,
+                        StatusCode::BUSY_HERE,
+                        BytesStr::from("There is an active call").into()
+                    ).await;
                 } else {
                     let (action_tx, action_rx) = mpsc::channel(1);
                     let incoming_call = incoming_call.with_media(self.create_media()?);
