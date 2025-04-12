@@ -1,0 +1,32 @@
+[package]
+name = "sipacker_ua"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.97"
+bytes = "1.10.0"
+bytesstr = "1.0.2"
+clap = { version = "4.5.35", features = ["derive", "env"] }
+cpal = "0.15.3"
+dasp_sample = "0.11.0"
+enum_dispatch = "0.3.13"
+rubato = "0.16.1"
+tokio = "1.43.0"
+tokio-util = "0.7.14"
+
+tracing = { version = "0.1.41" }
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
+
+ezk-internal = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-rtc = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-rtc-proto = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-rtp = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-sdp-types = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-sip = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-sip-auth = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-sip-core = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-sip-types = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+ezk-sip-ua = { git = "https://github.com/9matan/ezk", branch = "yamatan" }
+
+ezk-g711 = { git = "https://github.com/kbalt/ezk-media.git", rev = "122d4a7ef1847a2919d9840ac83abc3ad7495aca" }

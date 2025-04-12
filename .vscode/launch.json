@@ -1,0 +1,23 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "(Linux) Launch",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceRoot}/target/debug/sipacker_ua",
+            "preLaunchTask": "rust: cargo build",
+            "cwd": "${workspaceRoot}",
+            "console": "integratedTerminal",
+            "args": ["--ip-addr", "192.168.0.117", "--port", "5060"],
+            "env": {
+                "RUST_LOG": "info,neli=error",
+                "RUST_BACKTRACE": "full",
+            },
+        },
+     ]
+
+}
