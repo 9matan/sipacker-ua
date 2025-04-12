@@ -90,7 +90,7 @@ impl App {
             if let Ok(command) = command_receiver.try_recv() {
                 self.execute_command(command).await;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
         Ok(())
     }
