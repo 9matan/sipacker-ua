@@ -1,4 +1,4 @@
-use std::{thread, time::Duration};
+use std::{borrow::Cow, collections::HashMap, thread, time::Duration};
 
 use crate::app::command::{self, Command};
 
@@ -145,6 +145,22 @@ impl RegisterParser {
         let parser = parser::Parser::new(["user".into(), "password".into(), "registrar".into()]);
         Self { parser }
     }
+
+    fn parse_password<'a>(data: &'a HashMap<String, String>) -> Result<Cow<'a, str>> {
+        let password = data.get("password")
+            .map(|s| s.as_str())
+            .unwrap_or("");
+        if password.starts_with("env:") {
+            let env_name = password.split(':')
+                .skip(1)
+                .next()
+                .ok_or(anyhow::Error::msg("The password env variable is not specified"))?;
+            let val = std::env::var(env_name)?;
+            Ok(val.into())
+        } else {
+            Ok(password.into())
+        }
+    }
 }
 
 impl CommandParserTrait for RegisterParser {
@@ -160,12 +176,12 @@ impl CommandParserTrait for RegisterParser {
             let user_name = data.get("user").ok_or(CommandParserError::Arguments(
                 "\"user\" field is missing".to_owned(),
             ))?;
-            let def_password = "".to_owned();
-            let password = data.get("password").unwrap_or(&def_password);
             let registrar = data.get("registrar").ok_or(CommandParserError::Arguments(
                 "\"registrar\" field is missing".to_owned(),
             ))?;
 
+            let password = Self::parse_password(&data)
+                .map_err(|err| CommandParserError::Arguments(err.to_string()))?;
             let credential = DigestUser::new(user_name, password.as_bytes());
             let registrar_host = parser::parse_host_port(registrar)
                 .map_err(|err| CommandParserError::Arguments(err.to_string()))?;
@@ -177,7 +193,7 @@ impl CommandParserTrait for RegisterParser {
     }
 
     fn get_help(&self) -> &str {
-        "register user=<extension_number> [password=<password>] registrar=<ip:port>"
+        "register user=<extension_number> [password=(<password>|env:<env_var>)] registrar=<ip:port>"
     }
 }
 
