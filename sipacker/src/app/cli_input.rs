@@ -147,14 +147,15 @@ impl RegisterParser {
     }
 
     fn parse_password<'a>(data: &'a HashMap<String, String>) -> Result<Cow<'a, str>> {
-        let password = data.get("password")
-            .map(|s| s.as_str())
-            .unwrap_or("");
+        let password = data.get("password").map(|s| s.as_str()).unwrap_or("");
         if password.starts_with("env:") {
-            let env_name = password.split(':')
+            let env_name = password
+                .split(':')
                 .skip(1)
                 .next()
-                .ok_or(anyhow::Error::msg("The password env variable is not specified"))?;
+                .ok_or(anyhow::Error::msg(
+                    "The password env variable is not specified",
+                ))?;
             let val = std::env::var(env_name)?;
             Ok(val.into())
         } else {

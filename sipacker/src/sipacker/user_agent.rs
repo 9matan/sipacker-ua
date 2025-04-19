@@ -1,8 +1,9 @@
-use crate::sipacker::call;
+use crate::sipacker::call::{self, CallTrait};
 
 use std::{
     collections::VecDeque,
     net::{IpAddr, SocketAddr},
+    time::Duration,
 };
 
 use anyhow::Result;
@@ -14,6 +15,7 @@ use ezk_sip::{Client, MediaSession, RegistrarConfig, Registration};
 use ezk_sip_auth::{DigestAuthenticator, DigestCredentials};
 use ezk_sip_types::{header::typed::FromTo, host::HostPort, StatusCode};
 use tokio::sync::mpsc;
+use tracing::info;
 
 #[derive(Debug, Clone)]
 pub enum UserAgentEvent {
@@ -31,7 +33,6 @@ pub struct UserAgent {
     events: VecDeque<UserAgentEvent>,
     reg_data: Option<RegData>,
     call: Option<call::Call>,
-    in_call_action_sender: Option<mpsc::Sender<call::IncomingCallAction>>,
 }
 
 struct RegData {
@@ -55,7 +56,6 @@ impl UserAgent {
             events: VecDeque::new(),
             reg_data: None,
             call: None,
-            in_call_action_sender: None,
         })
     }
 
@@ -68,7 +68,7 @@ impl UserAgent {
     }
 
     pub fn has_incoming_call(&self) -> bool {
-        self.in_call_action_sender.is_some()
+        matches!(self.call, Some(call::Call::Incoming(_)))
     }
 
     pub async fn register(
@@ -123,12 +123,14 @@ impl UserAgent {
         let target = misc::make_sip_uri(target_user_name, &reg_data.registrar_host)?;
         let authenticator = reg_data.create_authenticator();
         let media = self.create_media()?;
-        let outbound_call = reg_data
+        let outgoing_call = reg_data
             .registration
             .make_call(target, authenticator, media)
             .await?;
-        let call = call::Call::from_outgoing(outbound_call, audio_sender, audio_receiver);
-        self.call = Some(call);
+        let waiting_timeout = Duration::from_secs(10);
+        let call =
+            call::Call::from_outgoing(outgoing_call, audio_sender, audio_receiver, waiting_timeout);
+        self.call = Some(call.into());
 
         self.events.push_back(UserAgentEvent::Calling);
         Ok(())
@@ -162,34 +164,42 @@ impl UserAgent {
         audio_sender: mpsc::Sender<Bytes>,
         audio_receiver: mpsc::Receiver<Bytes>,
     ) -> Result<()> {
-        let sender = self
-            .in_call_action_sender
-            .take()
-            .ok_or(anyhow::Error::msg("There is no incoming call to accept"))?;
-
-        sender
-            .send(call::IncomingCallAction::Accept {
-                audio_sender,
-                audio_receiver,
-            })
+        let in_call_state = self.get_incoming_waiting_for_action_call()?;
+        let call = in_call_state
+            .send_accept(audio_sender, audio_receiver)
             .await?;
+        self.call = Some(call);
         Ok(())
     }
 
     pub async fn decline_incoming_call(&mut self) -> Result<()> {
-        let sender = self
-            .in_call_action_sender
-            .take()
-            .ok_or(anyhow::Error::msg("There is no incoming call to decline"))?;
-
-        sender.send(call::IncomingCallAction::Decline).await?;
+        let in_call_state = self.get_incoming_waiting_for_action_call()?;
+        let call = in_call_state
+            .send_decline(call::DeclineCode::UserDeclined, "Declined")
+            .await?;
+        self.call = Some(call);
         Ok(())
+    }
+
+    fn get_incoming_waiting_for_action_call(
+        &mut self,
+    ) -> Result<call::states::incoming::WaitingForAction> {
+        let call = self
+            .call
+            .take()
+            .ok_or(anyhow::Error::msg("There is no active call"))?;
+        match call.as_incoming_waiting_for_action() {
+            Ok(state) => Ok(state),
+            Err((call, err)) => {
+                self.call = Some(call);
+                Err(err)
+            }
+        }
     }
 
     pub async fn terminate_call(&mut self) -> Result<()> {
         if let Some(call) = self.call.take() {
             call.terminate().await?;
-            self.in_call_action_sender = None;
             self.events.push_back(UserAgentEvent::CallTerminated);
         }
         Ok(())
@@ -213,19 +223,27 @@ impl UserAgent {
                 .get_incoming_call(reg_data.registration.contact().clone())
                 .await;
             if let Ok(Some((incoming_call, from))) = result {
+                let incoming_call = incoming_call.with_media(self.create_media()?);
+                let call = call::Call::from_incoming(incoming_call);
                 if self.has_active_call() {
-                    tracing::debug!("Reject incoming call: there is the active call already");
-                    call::run_declining_task(
-                        incoming_call,
-                        StatusCode::BUSY_HERE,
-                        BytesStr::from("There is an active call").into(),
-                    )
-                    .await;
+                    match call.as_incoming_waiting_for_action() {
+                        Ok(waiting_for_action) => {
+                            info!(
+                                "Declining an incoming call {:?}: there is the active one already",
+                                from.uri.uri
+                            );
+                            waiting_for_action
+                                .send_decline(call::DeclineCode::Busy, "The UA is busy")
+                                .await?;
+                        }
+                        Err((call, err)) => {
+                            tracing::error!(
+                                "A new incoming call must be in a waiting state. Err: {err}"
+                            );
+                            call.terminate().await?;
+                        }
+                    }
                 } else {
-                    let (action_tx, action_rx) = mpsc::channel(1);
-                    let incoming_call = incoming_call.with_media(self.create_media()?);
-                    let call = call::Call::from_incoming(incoming_call, action_rx);
-                    self.in_call_action_sender = Some(action_tx);
                     self.call = Some(call);
                     self.events.push_back(UserAgentEvent::IncomingCall(from));
                 }
@@ -244,8 +262,8 @@ impl UserAgent {
             let (call, event) = match run_res {
                 Ok((call, event)) => {
                     let event = event.map(|event| match event {
-                        call::Event::Established => UserAgentEvent::CallEstablished,
-                        call::Event::Terminated => UserAgentEvent::CallTerminated,
+                        call::CallEvent::Established => UserAgentEvent::CallEstablished,
+                        call::CallEvent::Terminated => UserAgentEvent::CallTerminated,
                     });
                     (call, event)
                 }
@@ -260,10 +278,6 @@ impl UserAgent {
         } else {
             None
         };
-
-        if self.call.is_none() {
-            self.in_call_action_sender = None;
-        }
     }
 }
 
