@@ -176,6 +176,10 @@ impl App {
         self.user_agent
             .accept_incoming_call(audio_sender, audio_receiver)
             .await
+            .inspect_err(|_err| {
+                self.audio_system.destroy_output_stream();
+                self.audio_system.destroy_input_stream();
+            })
     }
 
     pub(crate) async fn decline_call(&mut self) -> Result<()> {
