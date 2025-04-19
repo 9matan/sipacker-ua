@@ -1,8 +1,8 @@
-use crate::sipacker::call;
+use crate::sipacker::call::{self, CallTrait};
 
 use std::{
     collections::VecDeque,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, SocketAddr}, time::Duration,
 };
 
 use anyhow::Result;
@@ -123,12 +123,13 @@ impl UserAgent {
         let target = misc::make_sip_uri(target_user_name, &reg_data.registrar_host)?;
         let authenticator = reg_data.create_authenticator();
         let media = self.create_media()?;
-        let outbound_call = reg_data
+        let outgoing_call = reg_data
             .registration
             .make_call(target, authenticator, media)
             .await?;
-        let call = call::Call::from_outgoing(outbound_call, audio_sender, audio_receiver);
-        self.call = Some(call);
+        let waiting_timeout = Duration::from_secs(10);
+        let call = call::OutgoingCall::new(outgoing_call, audio_sender, audio_receiver, waiting_timeout);
+        self.call = Some(call.into());
 
         self.events.push_back(UserAgentEvent::Calling);
         Ok(())
@@ -224,9 +225,9 @@ impl UserAgent {
                 } else {
                     let (action_tx, action_rx) = mpsc::channel(1);
                     let incoming_call = incoming_call.with_media(self.create_media()?);
-                    let call = call::Call::from_incoming(incoming_call, action_rx);
+                    let call = call::IncomingCall::new(incoming_call, action_rx);
                     self.in_call_action_sender = Some(action_tx);
-                    self.call = Some(call);
+                    self.call = Some(call.into());
                     self.events.push_back(UserAgentEvent::IncomingCall(from));
                 }
             }
